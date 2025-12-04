@@ -1,0 +1,29 @@
+# --- System & Python ---
+.venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+
+# --- Daten-Ordner (Ignorieren) ---
+Zonen/
+Diensstellen/
+batch-datein/
+SEW/
+Refined_*/
+Run_*/
+parts/
+single_zones/
+output/
+
+# --- Einzelne Daten-Dateien ---
+*.geojson
+*.csv
+*.zip
+
+# --- Lokale Konfigurationen (die sich ständig ändern) ---
+*.json
+# Ausnahme: Wir wollen vielleicht Beispiel-Configs behalten, 
+# aber da deine Skripte diese überschreiben, ignorieren wir sie besser auch.
+
+# --- Streamlit ---
+.streamlit/
