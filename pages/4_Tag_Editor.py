@@ -2,124 +2,107 @@ import streamlit as st
 import geopandas as gpd
 import pandas as pd
 import os
-import tkinter as tk
-from tkinter import filedialog
+import sys
+
+# --- IMPORT SHARED TOOLS ---
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from src.geojson_tools import (
+    select_file_dialog, 
+    load_geodataframe
+)
 
 # --- SETUP ---
 st.set_page_config(page_title="Geo List Editor V2", layout="wide", page_icon="📜")
-
-# --- CSS FÜR KOMPAKTERES DESIGN ---
-st.markdown("""
-<style>
-    .streamlit-expanderHeader {font-weight: bold; background-color: #f0f2f6;}
-    div[data-testid="stForm"] {border: 2px solid #ddd; padding: 20px; border-radius: 10px;}
-</style>
-""", unsafe_allow_html=True)
+st.title("📜 GeoJSON Tag Editor")
+st.markdown("Bearbeite Attribute (Tags) direkt in einer Tabelle oder verwalte die Spaltenstruktur.")
 
 # --- STATE ---
-if "gdf" not in st.session_state: st.session_state["gdf"] = None
-if "filepath" not in st.session_state: st.session_state["filepath"] = None
+if "editor_gdf" not in st.session_state: st.session_state["editor_gdf"] = None
+if "editor_filepath" not in st.session_state: st.session_state["editor_filepath"] = None
+if "editor_unsaved_changes" not in st.session_state: st.session_state["editor_unsaved_changes"] = False
 
 # --- HELPER ---
-def load_file():
-    root = tk.Tk(); root.withdraw(); root.wm_attributes('-topmost', 1)
-    f = filedialog.askopenfilename(filetypes=[("GeoJSON", "*.geojson")])
-    root.destroy()
-    if f:
-        try:
-            st.session_state["gdf"] = gpd.read_file(f)
-            st.session_state["filepath"] = f
-        except Exception as e:
-            st.error(f"Fehler beim Laden: {e}")
-
 def save_to_disk():
-    if st.session_state["gdf"] is not None and st.session_state["filepath"]:
+    if st.session_state["editor_gdf"] is not None and st.session_state["editor_filepath"]:
         try:
-            st.session_state["gdf"].to_file(st.session_state["filepath"], driver='GeoJSON')
+            # Speichern
+            st.session_state["editor_gdf"].to_file(st.session_state["editor_filepath"], driver='GeoJSON')
+            st.session_state["editor_unsaved_changes"] = False
             st.toast(f"✅ Datei erfolgreich gespeichert!", icon="💾")
         except Exception as e:
             st.error(f"Fehler beim Speichern: {e}")
 
-# --- UI SIDEBAR ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("🗂️ Datei")
     if st.button("📂 Datei öffnen", type="primary"):
-        load_file()
+        f = select_file_dialog()
+        if f:
+            try:
+                st.session_state["editor_gdf"] = load_geodataframe(f)
+                st.session_state["editor_filepath"] = f
+                st.session_state["editor_unsaved_changes"] = False
+                st.rerun()
+            except Exception as e:
+                st.error(f"Fehler: {e}")
     
-    if st.session_state["gdf"] is not None:
-        st.success(f"Offen: {os.path.basename(st.session_state['filepath'])}")
-        st.info(f"{len(st.session_state['gdf'])} Features")
+    if st.session_state["editor_gdf"] is not None:
+        fname = os.path.basename(st.session_state['editor_filepath'])
+        st.success(f"Offen: `{fname}`")
+        st.caption(f"{len(st.session_state['editor_gdf'])} Features")
         
         st.markdown("---")
         st.header("💾 Speichern")
-        if st.button("Auf Festplatte schreiben"):
+        
+        if st.session_state["editor_unsaved_changes"]:
+            st.warning("⚠️ Ungespeicherte Änderungen!")
+        
+        if st.button("Auf Festplatte schreiben", type="primary" if st.session_state["editor_unsaved_changes"] else "secondary"):
             save_to_disk()
-            
-        st.warning("⚠️ WICHTIG: Änderungen in der Liste rechts müssen erst mit dem Button 'Änderungen übernehmen' bestätigt werden, bevor du hier speicherst!")
+
 
 # --- MAIN AREA ---
-if st.session_state["gdf"] is not None:
-    gdf = st.session_state["gdf"]
-    cols = [c for c in gdf.columns if c != 'geometry']
+if st.session_state["editor_gdf"] is not None:
+    gdf = st.session_state["editor_gdf"]
+    
+    # Tabs für Daten und Struktur
+    tab_data, tab_struct = st.tabs(["📝 Daten bearbeiten (Excel-Modus)", "🔧 Spalten verwalten"])
 
-    # TABS: HIER IST DIE TRENNUNG ZWISCHEN DATEN UND STRUKTUR
-    tab_list, tab_struct = st.tabs(["📝 Werte bearbeiten (Liste)", "🔧 Tags verwalten (Spalten)"])
-
-    # === TAB 1: LISTE (DIE SCROLLBARE ANSICHT) ===
-    with tab_list:
-        st.subheader("Features bearbeiten")
+    # === TAB 1: DATEN (Data Editor) ===
+    with tab_data:
+        st.info("Du kannst Werte direkt in der Tabelle ändern. Geometrie-Spalten sind ausgeblendet.")
         
-        # Start des Formulars (verhindert ständiges Neuladen)
-        with st.form("bulk_edit_form"):
+        # Wir trennen Geometrie ab, da DataEditor die nicht gut darstellen kann
+        df_display = pd.DataFrame(gdf.drop(columns='geometry'))
+        
+        # Der Editor
+        edited_df = st.data_editor(
+            df_display,
+            num_rows="fixed", # Keine Zeilen hinzufügen/löschen hier (Geometrie würde fehlen)
+            use_container_width=True,
+            height=600,
+            key="data_editor_widget"
+        )
+        
+        # Check auf Änderungen
+        if not df_display.equals(edited_df):
+            # Änderungen erkannt -> GDF updaten
+            # Wir iterieren über die Spalten und updaten das GDF
+            for col in edited_df.columns:
+                gdf[col] = edited_df[col]
             
-            for idx, row in gdf.iterrows():
-                # Name für den Header bauen
-                name_display = f"#{idx}"
-                if 'name' in row and row['name']: name_display += f" | {row['name']}"
-                elif 'alt_name' in row and row['alt_name']: name_display += f" | {row['alt_name']}"
-                
-                # Feature Block
-                with st.expander(name_display, expanded=True):
-                    # Grid Layout (3 Spalten pro Zeile)
-                    c_cols = st.columns(3)
-                    
-                    for i, col in enumerate(cols):
-                        val = row[col]
-                        val_str = str(val) if pd.notna(val) else ""
-                        
-                        unique_key = f"cell_{idx}_{col}"
-                        
-                        with c_cols[i % 3]:
-                            st.text_input(label=col, value=val_str, key=unique_key)
-            
-            st.markdown("---")
-            # Submit Button am Ende der Liste
-            if st.form_submit_button("✔️ Alle Änderungen in den Speicher übernehmen", type="primary"):
-                updates_count = 0
-                for idx in gdf.index:
-                    for col in cols:
-                        key = f"cell_{idx}_{col}"
-                        if key in st.session_state:
-                            new_val = st.session_state[key]
-                            # Leere Strings zu None (optional, hält GeoJSON sauber)
-                            final_val = new_val if new_val.strip() != "" else None
-                            
-                            current = gdf.at[idx, col]
-                            # Nur schreiben wenn anders (Performance)
-                            if str(current) != str(final_val) and not (pd.isna(current) and final_val is None):
-                                gdf.at[idx, col] = final_val
-                                updates_count += 1
-                
-                st.session_state["gdf"] = gdf
-                st.success(f"{updates_count} Werte aktualisiert! Klicke jetzt links auf 'Auf Festplatte schreiben'.")
-                st.rerun()
+            st.session_state["editor_gdf"] = gdf
+            st.session_state["editor_unsaved_changes"] = True
+            st.rerun() # Refresh um Warnung in Sidebar anzuzeigen
 
-    # === TAB 2: STRUKTUR (HIER KANNST DU SPALTEN BEARBEITEN) ===
+
+    # === TAB 2: STRUKTUR (Spalten) ===
     with tab_struct:
         st.markdown("### 🔧 Tags Management")
-        st.info("Hier kannst du Tags (Spalten) für die gesamte Datei hinzufügen, umbenennen oder löschen.")
         
         col1, col2, col3 = st.columns(3)
+        cols = [c for c in gdf.columns if c != 'geometry']
         
         # 1. Hinzufügen
         with col1:
@@ -128,7 +111,8 @@ if st.session_state["gdf"] is not None:
             default_val = st.text_input("Standardwert (optional)")
             if st.button("Hinzufügen"):
                 if new_col_name and new_col_name not in gdf.columns:
-                    st.session_state["gdf"][new_col_name] = default_val if default_val else None
+                    st.session_state["editor_gdf"][new_col_name] = default_val if default_val else None
+                    st.session_state["editor_unsaved_changes"] = True
                     st.success(f"Tag '{new_col_name}' hinzugefügt.")
                     st.rerun()
                 elif new_col_name in gdf.columns:
@@ -141,7 +125,8 @@ if st.session_state["gdf"] is not None:
             rename_new = st.text_input("Neuer Name", value=rename_target)
             if st.button("Umbenennen"):
                 if rename_new and rename_new not in gdf.columns:
-                    st.session_state["gdf"] = st.session_state["gdf"].rename(columns={rename_target: rename_new})
+                    st.session_state["editor_gdf"] = st.session_state["editor_gdf"].rename(columns={rename_target: rename_new})
+                    st.session_state["editor_unsaved_changes"] = True
                     st.success(f"Umbenannt in '{rename_new}'.")
                     st.rerun()
                 else:
@@ -152,9 +137,10 @@ if st.session_state["gdf"] is not None:
             st.write("**Tag löschen**")
             del_target = st.selectbox("Tag wählen", cols, key="sel_del")
             if st.button("🗑️ Löschen", type="secondary"):
-                st.session_state["gdf"] = st.session_state["gdf"].drop(columns=[del_target])
+                st.session_state["editor_gdf"] = st.session_state["editor_gdf"].drop(columns=[del_target])
+                st.session_state["editor_unsaved_changes"] = True
                 st.warning(f"Tag '{del_target}' gelöscht.")
                 st.rerun()
 
 else:
-    st.info("Bitte öffne links eine Datei.")
+    st.info("👈 Bitte öffne links eine Datei.")

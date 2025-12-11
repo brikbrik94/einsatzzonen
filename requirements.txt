@@ -3,5 +3,8 @@ geopandas
 pandas
 requests
 shapely
-Rtree
+networkx
+libpysal
 matplotlib
+rtree
+fiona

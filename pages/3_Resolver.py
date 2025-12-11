@@ -2,29 +2,26 @@ import streamlit as st
 import geopandas as gpd
 import pandas as pd
 import os
-import tkinter as tk
-from tkinter import filedialog
+import sys
 from datetime import datetime
+
+# --- IMPORT SHARED TOOLS ---
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from src.geojson_tools import (
+    select_files_dialog, 
+    select_folder_dialog, 
+    load_geodataframe
+)
 
 # --- SETUP ---
 st.set_page_config(page_title="Resolver", layout="wide")
-st.title("🧩 Einsatzzonen Resolver (Final)")
+st.title("🧩 Einsatzzonen Resolver (Step 3)")
 st.markdown("Fügt Teil-Dateien zusammen, standardisiert Namen und löst Grenzen auf.")
 
 # --- STATE ---
 if "res_input_files" not in st.session_state: st.session_state["res_input_files"] = []
 if "res_output_folder" not in st.session_state: st.session_state["res_output_folder"] = os.getcwd()
-
-# --- HELPER ---
-def select_files():
-    root = tk.Tk(); root.withdraw(); root.wm_attributes('-topmost', 1)
-    files = filedialog.askopenfilenames(title="Wähle GeoJSON Dateien (Mehrfachauswahl)", filetypes=[("GeoJSON", "*.geojson")])
-    root.destroy()
-    return list(files)
-
-def select_folder():
-    root = tk.Tk(); root.withdraw(); root.wm_attributes('-topmost', 1)
-    d = filedialog.askdirectory(); root.destroy(); return d
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -32,10 +29,12 @@ with st.sidebar:
     c1, c2 = st.columns([1, 4])
     with c1:
         if st.button("➕"):
-            new = select_files()
+            new = select_files_dialog()
             if new:
+                # Duplikate vermeiden
+                current_set = set(st.session_state["res_input_files"])
                 for f in new:
-                    if f not in st.session_state["res_input_files"]:
+                    if f not in current_set:
                         st.session_state["res_input_files"].append(f)
                 st.rerun()
     with c2:
@@ -53,10 +52,17 @@ with st.sidebar:
 
     st.markdown("---")
     st.header("2. Output")
-    if st.button("📂 Zielordner"):
-        d = select_folder()
-        if d: st.session_state["res_output_folder"] = d
-    st.text_input("Pfad", st.session_state["res_output_folder"], disabled=True)
+    
+    c3, c4 = st.columns([3, 1])
+    with c4:
+        if st.button("📂", key="out"):
+            d = select_folder_dialog()
+            if d: 
+                st.session_state["res_output_folder"] = d
+                st.rerun()
+    with c3:
+        st.text_input("Pfad", st.session_state["res_output_folder"], key="res_out_display")
+        
     out_filename = st.text_input("Dateiname", "Final_Merged_Zones.geojson")
 
 # --- MAIN LOGIC ---
@@ -67,8 +73,8 @@ if st.session_state["res_input_files"]:
     # 1. ANALYSE (Erste Datei lesen um Spalten zu finden)
     first_file = st.session_state["res_input_files"][0]
     try:
+        # Wir laden nur eine Zeile für die Spalten-Vorschau
         preview = gpd.read_file(first_file, rows=1)
-        # Alle Spalten außer Geometrie
         available_cols = [c for c in preview.columns if c != 'geometry']
     except Exception as e:
         st.error(f"Konnte Datei nicht lesen: {e}")
@@ -93,7 +99,7 @@ if st.session_state["res_input_files"]:
     with c2:
         st.subheader("⚙️ Optionen")
         do_dissolve = st.checkbox("Grenzen auflösen (Dissolve)", value=True, help="Entfernt Grenzen zwischen gleichen Zonen (z.B. über Bezirke hinweg).")
-        keep_attrs = st.checkbox("Andere Attribute behalten (Erster Wert)", value=False, help="Wenn deaktiviert, wird die Datei gereinigt und enthält nur 'name' und Geometrie.")
+        keep_attrs = st.checkbox("Andere Attribute behalten", value=True, help="Wenn aktiv, werden Tags (Adresse, etc.) beibehalten (erster gefundener Wert pro Zone).")
 
     st.markdown("---")
 
@@ -108,11 +114,12 @@ if st.session_state["res_input_files"]:
             # A. Lade Schleife
             for i, fpath in enumerate(files):
                 status.text(f"Lade {i+1}/{len(files)}: {os.path.basename(fpath)}")
-                tmp = gpd.read_file(fpath).to_crs(epsg=4326)
+                
+                # NUTZUNG DES ZENTRALEN TOOLS (inkl. Repair)
+                tmp = load_geodataframe(fpath)
                 
                 # Check ob Spalte existiert
                 if target_col not in tmp.columns:
-                    # Fallback falls Spalte fehlt (sollte nicht passieren bei gleichen Dateien)
                     tmp[target_col] = "Unknown"
                 
                 gdfs.append(tmp)
@@ -128,13 +135,18 @@ if st.session_state["res_input_files"]:
             
             # D. Cleanup Columns
             if not keep_attrs:
+                # Nur Name und Geometrie behalten
                 full = full[['name', 'geometry']]
             
             # E. Dissolve
             if do_dissolve:
                 status.text("Löse Grenzen auf (Dissolve)...")
-                full['geometry'] = full.geometry.buffer(0) # Fix Topology
-                # Dissolve by 'name'
+                # Sicherstellen, dass Geometrie valide ist vor Dissolve
+                full['geometry'] = full.geometry.buffer(0)
+                
+                # Dissolve by 'name'. 
+                # as_index=False sorgt dafür, dass 'name' eine Spalte bleibt.
+                # Andere Spalten werden per 'first' aggregiert (erster Wert wird behalten).
                 final = full.dissolve(by='name', as_index=False)
             else:
                 final = full
@@ -150,10 +162,14 @@ if st.session_state["res_input_files"]:
             st.success(f"Erfolgreich gespeichert: `{out_p}`")
             
             with st.expander("Vorschau Ergebnisse"):
-                st.dataframe(final.drop(columns='geometry').head(10))
+                # Geometrie nicht anzeigen in Tabelle, dauert zu lange
+                st.dataframe(final.drop(columns='geometry', errors='ignore').head(20))
 
         except Exception as e:
             st.error(f"Fehler: {e}")
+            # Optional: Stacktrace für Debugging
+            # import traceback
+            # st.text(traceback.format_exc())
 
 else:
     st.info("👈 Bitte links Dateien auswählen.")

@@ -3,326 +3,462 @@ import geopandas as gpd
 import pandas as pd
 import requests
 import os
-import json
 import math
-import tkinter as tk
-from tkinter import filedialog
+import sys
+import json 
 from datetime import datetime
 from shapely.geometry import Polygon
 
-# --- KONFIGURATION ---
-st.set_page_config(page_title="Einsatzzonen Generator (Step 1)", layout="wide")
+# --- SETUP: SHARED TOOLS ---
+# Nur für Config & Dialoge, NICHT für Daten-Loading
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
+
+try:
+    from src.geojson_tools import (
+        load_config, save_config, select_file_dialog, select_folder_dialog
+    )
+except ImportError:
+    st.error("Fehler: 'src/geojson_tools.py' nicht gefunden.")
+    st.stop()
+
+# --- HELPER: LOKALER RAW LOADER (SICHERHEIT) ---
+def load_data_local(filepath):
+    """
+    Lädt Geodaten 1:1 ohne Veränderungen an den Koordinaten.
+    """
+    if not os.path.exists(filepath): return None
+    try:
+        gdf = gpd.read_file(filepath)
+        # Entferne technisch leere Zeilen
+        if 'geometry' in gdf.columns:
+            gdf = gdf[gdf.geometry.notna()]
+        # Setze CRS Tag falls fehlend (Standard GeoJSON = 4326)
+        if gdf.crs is None:
+            gdf.set_crs(epsg=4326, inplace=True)
+        return gdf
+    except Exception as e:
+        st.error(f"Fehler beim Laden: {e}")
+        return None
+
+# --- HELPER: TAG ANALYSE ---
+def get_station_tags_df(filepath):
+    try:
+        gdf = load_data_local(filepath)
+        if gdf is None: return pd.DataFrame()
+        cols = [c for c in gdf.columns if c != 'geometry']
+        sel = st.session_state.get("selected_tags", [])
+        data = [{"selected": c in sel, "name": c, "count": gdf[c].count()} for c in cols]
+        return pd.DataFrame(data).sort_values(by=["selected", "count"], ascending=[False, False])
+    except: return pd.DataFrame()
+
+# --- CONFIG ---
+st.set_page_config(page_title="Einsatzzonen Generator", layout="wide")
 GLOBAL_CONFIG_FILE = "general_config.json"
-st.title("🚒 Einsatzzonen Generator (Step 1)")
-st.markdown("Erstellt Hexagon-Gitter (Outbound-Logik) mit **erweitertem Nachbarschafts-Pool**.")
+st.title("🚒 Einsatzzonen Generator (Robust Iterativ)")
 
-# --- HELPER ---
-def load_global_config():
-    if os.path.exists(GLOBAL_CONFIG_FILE):
-        try: return json.load(open(GLOBAL_CONFIG_FILE, 'r', encoding='utf-8'))
-        except: return {}
-    return {}
-
-def save_global_config(data):
-    try: json.dump(data, open(GLOBAL_CONFIG_FILE, 'w', encoding='utf-8'), indent=4, ensure_ascii=False)
-    except: pass
-
-def select_file_dialog(title, ft):
-    root = tk.Tk(); root.withdraw(); root.wm_attributes('-topmost', 1)
-    f = filedialog.askopenfilename(title=title, filetypes=ft)
-    root.destroy(); return f
-
-def select_folder_dialog():
-    root = tk.Tk(); root.withdraw(); root.wm_attributes('-topmost', 1)
-    d = filedialog.askdirectory()
-    root.destroy(); return d
-
-# --- STATE ---
-cfg = load_global_config()
+cfg = load_config(GLOBAL_CONFIG_FILE)
 defaults = {
-    "ors_base_url": "http://127.0.0.1:8082/ors/v2", "available_profiles": ["driving-car", "driving-emergency"],
-    "selected_profile": "driving-car", "hex_edge_length": 500, "n_neighbors": 10, "matrix_limit": 2500,
-    "run_name": "Run_01", "output_folder_path": os.getcwd(), "area_file_path": "", "stations_file_path": "",
-    "sequential_processing": False, "store_candidates": False, "candidate_count": 5, "save_single_zones": True
+    "area_file_path": "", "stations_file_path": "", "output_folder_path": os.getcwd(),
+    "run_name": "Run_01", "ors_base_url": "http://127.0.0.1:8082/ors/v2", 
+    "available_profiles": ["driving-car"], "selected_profile": "driving-car", 
+    "hex_edge_length": 500, "n_neighbors": 10, "matrix_limit": 2500,
+    "sequential_processing": False, "save_single_zones": True,
+    "store_candidates": False, "candidate_count": 5, "selected_tags": [] 
 }
+# Pfad Migration
+if "area_path_loaded" in cfg and not cfg.get("area_file_path"): cfg["area_file_path"] = cfg["area_path_loaded"]
+if "out_path" in cfg and not cfg.get("output_folder_path"): cfg["output_folder_path"] = cfg["out_path"]
 for k, v in defaults.items():
     if k not in st.session_state: st.session_state[k] = cfg.get(k, v)
 
-# --- UI ---
+def autosave():
+    save_config(GLOBAL_CONFIG_FILE, {k: st.session_state[k] for k in defaults.keys() if k in st.session_state})
+
+# --- UI SIDEBAR ---
 with st.sidebar:
-    st.header("1. Setup")
-    st.session_state["ors_base_url"] = st.text_input("ORS URL", st.session_state["ors_base_url"])
-    if st.button("Check Verb."):
-        try:
-            r = requests.get(f"{st.session_state['ors_base_url']}/status", timeout=2)
-            if r.status_code==200 and "profiles" in r.json(): 
-                st.session_state["available_profiles"] = list(r.json()["profiles"].keys()); st.success("OK")
+    st.header("Setup")
+    st.text_input("ORS URL", key="ors_base_url")
+    if st.button("Verb. Prüfen"):
+        try: 
+            requests.get(f"{st.session_state['ors_base_url']}/status", timeout=1)
+            st.success("OK")
         except: st.error("Fehler")
-    st.session_state["selected_profile"] = st.selectbox("Profil", st.session_state["available_profiles"])
+    st.selectbox("Profil", st.session_state["available_profiles"], key="selected_profile")
+    st.divider()
+    
+    if st.button("📂 Gebiet"): 
+        f = select_file_dialog("Gebiet"); 
+        if f: st.session_state["area_file_path"] = f; autosave(); st.rerun()
+    st.text_input("Gebiet", key="area_file_path")
 
-    st.markdown("---")
-    c1,c2 = st.columns([3,1])
-    with c2: 
-        if st.button("📂", key="b1"): 
-            f = select_file_dialog("Gebiet", [("GeoJSON","*.geojson")])
-            if f: st.session_state["area_file_path"]=f; st.rerun()
-    with c1: st.session_state["area_file_path"] = st.text_input("Gebiet", st.session_state["area_file_path"])
+    if st.button("📂 DS"): 
+        f = select_file_dialog("DS"); 
+        if f: st.session_state["stations_file_path"] = f; autosave(); st.rerun()
+    st.text_input("DS", key="stations_file_path")
+    
+    st.divider()
+    st.text_input("Run Name", key="run_name")
+    if st.button("📂 Output"):
+        d = select_folder_dialog("Output"); 
+        if d: st.session_state["output_folder_path"] = d; autosave(); st.rerun()
+    st.text_input("Output", key="output_folder_path")
 
-    c3,c4 = st.columns([3,1])
-    with c4:
-        if st.button("📂", key="b2"): 
-            f = select_file_dialog("DS", [("GeoJSON","*.geojson")])
-            if f: st.session_state["stations_file_path"]=f; st.rerun()
-    with c3: st.session_state["stations_file_path"] = st.text_input("Dienststellen", st.session_state["stations_file_path"])
+# Tag Auswahl Formular
+if st.session_state["stations_file_path"] and os.path.exists(st.session_state["stations_file_path"]):
+    st.divider()
+    with st.expander("Datenfelder wählen (Tags)"):
+        tags_df = get_station_tags_df(st.session_state["stations_file_path"])
+        if not tags_df.empty:
+            with st.form("tag_form"):
+                sel = []
+                st.write("Wähle Spalten, die in das Ergebnis übernommen werden sollen:")
+                for _, r in tags_df.iterrows():
+                    if st.checkbox(f"{r['name']} ({r['count']})", value=r['selected'], key=f"chk_{r['name']}"):
+                        sel.append(r['name'])
+                if st.form_submit_button("💾 Auswahl Speichern"):
+                    st.session_state["selected_tags"] = sel; autosave(); st.rerun()
 
-    st.markdown("---")
-    st.session_state["run_name"] = st.text_input("Lauf-Name", st.session_state["run_name"])
-    c5,c6 = st.columns([3,1])
-    with c6:
-        if st.button("📂", key="b3"):
-            d = select_folder_dialog(); 
-            if d: st.session_state["output_folder_path"]=d; st.rerun()
-    with c5: st.session_state["output_folder_path"] = st.text_input("Output", st.session_state["output_folder_path"])
-
-with st.expander("⚙️ Erweitert", expanded=False):
+st.divider()
+with st.expander("Parameter", expanded=True):
     c1,c2 = st.columns(2)
     with c1:
-        st.session_state["hex_edge_length"] = st.number_input("Kantenlänge (m)", 50, value=st.session_state["hex_edge_length"])
-        st.session_state["store_candidates"] = st.checkbox("Kandidaten speichern (für Step 2)", st.session_state["store_candidates"])
-        if st.session_state["store_candidates"]:
-            st.session_state["candidate_count"] = st.number_input("Top N", 1, 20, st.session_state["candidate_count"])
+        st.number_input("Grid (m)", min_value=10, value=500, key="hex_edge_length")
+        st.number_input("Nachbarn (Top N)", min_value=1, value=10, key="n_neighbors", help="Pro Wache in der Zone werden N Nachbarn geladen.")
     with c2:
-        st.session_state["n_neighbors"] = st.number_input("N Nachbarn (pro interner Wache)", 1, value=st.session_state["n_neighbors"])
-        st.session_state["matrix_limit"] = st.number_input("Limit", 100, value=st.session_state["matrix_limit"])
-        st.session_state["sequential_processing"] = st.checkbox("Sequentiell (Smart Batch)", st.session_state["sequential_processing"])
-        if st.session_state["sequential_processing"]:
-            st.info("ℹ️ Erzeugt autom. 'parts/' Ordner mit Hex-Dateien für Step 2.")
-            st.session_state["save_single_zones"] = st.checkbox("Auch aufgelöste Zonen einzeln speichern", st.session_state["save_single_zones"])
+        st.number_input("Matrix Limit", value=2500, key="matrix_limit")
+        st.checkbox("Sequentiell", key="sequential_processing")
+        st.checkbox("Zonen einzeln speichern", key="save_single_zones")
+    st.checkbox("Kandidaten speichern (in Grid)", key="store_candidates")
+    if st.session_state["store_candidates"]:
+        st.number_input("Anzahl Kandidaten Spalten", 1, 50, 5, key="candidate_count")
 
-# --- LOGIC ---
-def create_hex_grid(gdf_area, edge):
-    gdf_proj = gdf_area.to_crs(epsg=3857)
-    min_x, min_y, max_x, max_y = gdf_proj.total_bounds
-    buff = edge*2; min_x-=buff; min_y-=buff; max_x+=buff; max_y+=buff
-    h_dist = math.sqrt(3)*edge; v_dist = 1.5*edge
+# --- KERN-LOGIK: ITERATIV ---
+
+def get_candidates_iterative(area, stations, n, cfg, ui_callback=None):
+    if area.crs != stations.crs:
+        if stations.crs: area = area.to_crs(stations.crs)
+
+    inside = gpd.sjoin(stations, area, how="inner", predicate="intersects")
+    has_inside_stations = not inside.empty
+    
+    anchors = []
+    if has_inside_stations:
+        inside_wgs = inside.to_crs(epsg=4326)
+        for idx, row in inside_wgs.iterrows():
+            name = str(row.get('final_label', idx))
+            geom = [row.geometry.centroid.x, row.geometry.centroid.y]
+            anchors.append({'name': name, 'coords': geom})
+    else:
+        try: c = area.to_crs(epsg=4326).geometry.union_all().centroid
+        except: c = area.to_crs(epsg=4326).geometry.unary_union.centroid
+        anchors.append({'name': 'Zentroid', 'coords': [c.x, c.y]})
+
+    stations_wgs = stations.to_crs(epsg=4326)
+    all_coords = [[p.x, p.y] for p in stations_wgs.geometry.centroid]
+    all_ids = stations_wgs.index.tolist()
+    
+    pool_indices = set()
+    error_log = []
+    
+    for i, anchor in enumerate(anchors):
+        # Update UI Message via Callback
+        if ui_callback:
+            ui_callback(f"Analysiere Wache {i+1} von {len(anchors)}: {anchor['name']}")
+
+        locs = all_coords + [anchor['coords']]
+        src_idx = list(range(len(all_coords)))
+        dst_idx = [len(all_coords)]
+        
+        try:
+            payload = {"locations": locs, "metrics": ["duration"], "sources": src_idx, "destinations": dst_idx}
+            # Timeout entfernt
+            r = requests.post(f"{cfg['url']}/matrix/{cfg['profile']}", json=payload, headers={'Content-Type':'application/json'}, timeout=None)
+            
+            if r.status_code == 200:
+                durs = r.json().get('durations')
+                results = []
+                for s_idx in range(len(all_coords)):
+                    if durs and durs[s_idx] and durs[s_idx][0] is not None:
+                        results.append((durs[s_idx][0], all_ids[s_idx]))
+                
+                results.sort(key=lambda x: x[0])
+                
+                # --- FIX: EXAKT N+1 (Selbst + N Nachbarn) ---
+                # Index 0 ist die Wache selbst (Zeit ~0), Index 1 bis N sind die Nachbarn
+                top_selection = [res[1] for res in results[:n+1]]
+                pool_indices.update(top_selection)
+            else:
+                error_log.append({"Anker": anchor['name'], "Fehler": f"HTTP {r.status_code}"})
+                
+        except Exception as e:
+            error_log.append({"Anker": anchor['name'], "Fehler": str(e)})
+            
+    return stations.loc[list(pool_indices)].copy(), has_inside_stations, error_log
+
+def create_hex_grid(area, edge):
+    am = area.to_crs(epsg=3857)
+    minx, miny, maxx, maxy = am.total_bounds
     hexs = []
-    curr_y = min_y; row = 0
-    while curr_y < max_y:
-        curr_x = min_x + (h_dist/2 if row%2==1 else 0)
-        while curr_x < max_x:
+    y = miny; row=0
+    h=math.sqrt(3)*edge; v=1.5*edge
+    while y < maxy+edge:
+        x = minx + (h/2 if row%2==1 else 0)
+        while x < maxx+edge:
             pts = []
             for i in range(6):
                 ang = math.pi/180*(60*i-30)
-                pts.append((curr_x+edge*math.cos(ang), curr_y+edge*math.sin(ang)))
+                pts.append((x+edge*math.cos(ang), y+edge*math.sin(ang)))
             hexs.append(Polygon(pts))
-            curr_x += h_dist
-        curr_y += v_dist; row += 1
-    g = gpd.GeoDataFrame({'geometry': hexs}, crs="EPSG:3857")
-    return g[g.intersects(gdf_proj.geometry.unary_union)].copy().to_crs(epsg=4326)
+            x += h
+        y += v; row+=1
+    g = gpd.GeoDataFrame({'geometry':hexs}, crs=3857)
+    try: u = am.geometry.union_all()
+    except: u = am.geometry.unary_union
+    return g[g.intersects(u)].copy().to_crs(epsg=4326)
 
-def filter_stations_smart(area, stations, n):
-    """
-    NEUE LOGIK:
-    1. Finde alle Wachen IM Gebiet.
-    2. Für JEDE dieser Wachen: Finde die N nächsten Nachbarn.
-    3. FALLBACK: Wenn KEINE Wache im Gebiet ist -> Finde N nächste vom Zentrum.
-    """
-    if area.crs != stations.crs: stations = stations.to_crs(area.crs)
+def run_routing_batch(hex_gdf, station_gdf, cfg, ui_callback):
+    h_c = [[p.x,p.y] for p in hex_gdf.geometry.centroid]
+    s_c = [[p.x,p.y] for p in station_gdf.geometry.centroid]
+    s_ids = station_gdf.index.tolist()
+    res = []
+    batch = max(1, int(cfg['matrix_limit']/len(s_c)))
+    total_batches = math.ceil(len(h_c)/batch)
     
-    # Temporär metrisch für korrekte Distanzen
-    stations_metric = stations.to_crs(epsg=3857)
-    
-    # 1. Wachen im Gebiet finden (mit kleinem Buffer für Randfälle)
-    buf = area.copy(); buf['geometry'] = buf.geometry.buffer(0.05)
-    inside = gpd.sjoin(stations, buf, how="inner", predicate="intersects")
-    
-    relevant_ids = set()
-    
-    if not inside.empty:
-        # STRATEGIE A: Gebiet hat Wachen
-        # Iteriere durch jede Wache im Gebiet und hole deren N Nachbarn
-        # Da wir 'stations_metric' nutzen, können wir Indizes von 'inside' nutzen
-        for idx, row in inside.iterrows():
-            # Hole Geometrie dieser Wache in metrisch
-            if idx in stations_metric.index:
-                origin_geom = stations_metric.loc[idx].geometry
-                # Berechne Distanz zu ALLEN Stationen
-                dists = stations_metric.geometry.distance(origin_geom)
-                # Nimm die N+1 nächsten (inklusive sich selbst)
-                nearest = dists.nsmallest(n + 1).index.tolist()
-                relevant_ids.update(nearest)
-    else:
-        # STRATEGIE B: Gebiet ist leer (Fallback)
-        # Nimm Zentroid des Gebiets und suche N Nachbarn
-        centroid = area.to_crs(epsg=3857).geometry.unary_union.centroid
-        dists = stations_metric.geometry.distance(centroid)
-        nearest = dists.nsmallest(n).index.tolist()
-        relevant_ids.update(nearest)
-    
-    return stations.loc[list(relevant_ids)].copy()
-
-def get_matrix_outbound(hex_gdf, stat_gdf, url, prof, limit, top_n, pbar, batch_txt):
-    h_coords = [[p.x,p.y] for p in hex_gdf.geometry.centroid]
-    # FIX: Ensure centroids for stations (works with Polygons too)
-    s_coords = [[p.x,p.y] for p in stat_gdf.geometry.centroid]
-    
-    if not h_coords: return None
-    batch = max(1, int(limit/len(s_coords))); res = []
-    s_ids = stat_gdf.index.tolist(); total = math.ceil(len(h_coords)/batch)
-    
-    for i in range(0, len(h_coords), batch):
-        cur_b = (i//batch)+1
-        if batch_txt: batch_txt.text(f"📡 Routing: Batch {cur_b} / {total} (Outbound)")
+    for i in range(0, len(h_c), batch):
+        batch_num = (i // batch) + 1
         
-        chunk = h_coords[i:i+batch]
-        locs = chunk + s_coords
+        # Fortschrittsbalken auf maximal 1.0 begrenzen
+        current_progress = min((i+batch)/len(h_c), 1.0)
+        
+        if ui_callback: 
+            ui_callback(f"Batch {batch_num}/{total_batches}", current_progress)
+            
+        chunk = h_c[i:i+batch]
+        locs = chunk + s_c
+        src = list(range(len(chunk), len(locs)))
+        dst = list(range(len(chunk)))
         try:
-            r = requests.post(f"{url}/matrix/{prof}", json={"locations":locs,"metrics":["duration"],"sources":list(range(len(chunk),len(chunk)+len(s_coords))),"destinations":list(range(len(chunk)))}, headers={'Content-Type':'application/json'})
+            pl = {"locations":locs, "metrics":["duration"], "sources":src, "destinations":dst}
+            r = requests.post(f"{cfg['url']}/matrix/{cfg['profile']}", json=pl, headers={'Content-Type':'application/json'}, timeout=None)
             if r.status_code==200:
-                durs = r.json()['durations']
-                for h_idx in range(len(chunk)):
-                    cands = []
-                    for s_idx in range(len(s_coords)):
-                        val = durs[s_idx][h_idx]
-                        if val is not None: cands.append((val, s_idx))
-                    cands.sort(key=lambda x:x[0])
-                    res.append([s_ids[x[1]] for x in cands[:top_n]])
+                d = r.json()['durations']
+                for hi in range(len(chunk)):
+                    v = []
+                    for si in range(len(s_c)):
+                        if d[si][hi] is not None: v.append((d[si][hi], s_ids[si]))
+                    v.sort(key=lambda x:x[0])
+                    # Top N speichern
+                    top_n = cfg['candidate_count'] if cfg['store_candidates'] else 1
+                    res.append([x[1] for x in v[:top_n]])
             else: 
                 for _ in chunk: res.append([])
-        except: 
+        except:
             for _ in chunk: res.append([])
-        if pbar: pbar.progress(min(cur_b/total, 1.0))
     return res
 
-def process_step(sub, stat, cfg, status_ph, batch_ph, name):
-    # 1. Filter
-    status_ph.markdown(f"**{name}**: 📍 Suche relevante Wachen...")
-    rel = filter_stations_smart(sub, stat, cfg["n_neighbors"])
+# --- UI HELPER: STATUS ANZEIGE ---
+def render_step_status(placeholder, steps_status, current_detail=""):
+    icons = {0: "⬜", 1: "🔄", 2: "✅", 3: "❌"}
+    md = ""
+    for name, status in steps_status:
+        icon = icons.get(status, "⬜")
+        style = "**" if status == 1 else ""
+        line = f"{icon} {style}{name}{style}"
+        if status == 1 and current_detail:
+            line += f"  — *{current_detail}*"
+        md += f"{line}  \n"
+    placeholder.markdown(md)
+
+# --- PROZESS STEUERUNG ---
+
+def process_single_area(sub_area, all_stations, cfg, status_ph, prog_bar, area_name, selected_tags):
     
-    # VORSCHAU EXPANDER
-    with st.expander(f"👁️ Vorschau: {len(rel)} Wachen für '{name}'", expanded=False):
-        c_map, c_list = st.columns([1,1])
+    # Initiale Steps
+    steps = [
+        ("1. Kandidaten finden", 1), 
+        ("2. Hex-Gitter erstellen", 0),
+        ("3. Matrix Routing", 0),
+        ("4. Daten zusammenführen", 0),
+        ("5. Auflösen & Speichern", 0)
+    ]
+    render_step_status(status_ph, steps, "Initialisiere...")
+    
+    # --- 1. KANDIDATEN ---
+    def cand_ui_cb(msg): 
+        render_step_status(status_ph, steps, msg)
+        
+    rel, has_inside, error_log = get_candidates_iterative(sub_area, all_stations, cfg["n_neighbors"], cfg, cand_ui_cb)
+    
+    if rel.empty:
+        steps[0] = ("1. Kandidaten finden", 3)
+        render_step_status(status_ph, steps, "Keine Wachen gefunden!")
+        return None, None
+
+    steps[0] = ("1. Kandidaten finden", 2)
+    steps[1] = ("2. Hex-Gitter erstellen", 1)
+    render_step_status(status_ph, steps, f"Gefunden: {len(rel)} Wachen")
+    
+    # --- UI: VORSCHAU ---
+    with st.expander(f"🗺️ Vorschau: {len(rel)} Wachen für '{area_name}'", expanded=False):
+        c_map, c_list = st.columns([2,1])
         with c_list: st.dataframe(rel[['final_label']].astype(str), height=200)
         with c_map:
-            # Map braucht Lat/Lon Spalten
-            map_df = pd.DataFrame({'lat': rel.geometry.centroid.y, 'lon': rel.geometry.centroid.x})
-            st.map(map_df, size=40, color='#ff0000', zoom=8)
+            rel_wgs = rel.to_crs(epsg=4326)
+            st.map(pd.DataFrame({'lat': rel_wgs.geometry.y, 'lon': rel_wgs.geometry.x}))
+        if error_log:
+            st.error(f"⚠️ Probleme bei {len(error_log)} Ankern:")
+            st.dataframe(pd.DataFrame(error_log), hide_index=True)
 
-    batch_ph.info(f"Pool: {len(rel)} Wachen")
+    # --- 2. GRID ---
+    grid = create_hex_grid(sub_area, cfg["hex_edge_length"])
+    if grid.empty:
+        steps[1] = ("2. Hex-Gitter erstellen", 3)
+        render_step_status(status_ph, steps, "Grid leer")
+        return None, None
+        
+    steps[1] = ("2. Hex-Gitter erstellen", 2)
+    steps[2] = ("3. Matrix Routing", 1)
+    render_step_status(status_ph, steps, f"{len(grid)} Hexagone")
     
-    # 2. Grid
-    status_ph.markdown(f"**{name}**: 🕸️ Grid ({cfg['hex_edge_length']}m)...")
-    gr = create_hex_grid(sub, cfg["hex_edge_length"])
-    if gr.empty: return None, None
+    # --- 3. ROUTING ---
+    def route_ui_cb(msg, progress):
+        render_step_status(status_ph, steps, msg)
+        prog_bar.progress(progress)
+        
+    matrix_res = run_routing_batch(grid, rel, cfg, route_ui_cb)
     
-    # 3. Route
-    status_ph.markdown(f"**{name}**: 📡 Matrix Routing ({len(gr)} Hex)...")
-    pb = st.progress(0)
-    need = cfg["candidate_count"] if cfg["store_candidates"] else 1
-    res = get_matrix_outbound(gr, rel, cfg["url"], cfg["profile"], cfg["limit"], need, pb, batch_ph)
-    pb.empty(); batch_ph.empty()
+    steps[2] = ("3. Matrix Routing", 2)
+    steps[3] = ("4. Daten zusammenführen", 1)
+    render_step_status(status_ph, steps)
+    prog_bar.empty()
     
-    # 4. Merge
-    status_ph.markdown(f"**{name}**: 🧬 Merge...")
-    lkp = stat['final_label'].to_dict()
-    gr['zone_label'] = [lkp.get(r[0]) if r else None for r in res]
+    # --- 4. MERGE ---
+    lkp = all_stations['final_label'].to_dict()
+    grid['zone_label'] = [lkp.get(r[0]) if r else None for r in matrix_res]
+    
     if cfg["store_candidates"]:
-        for i in range(cfg["candidate_count"]): gr[f"cand_{i+1}_name"] = [lkp.get(r[i]) if len(r)>i else None for r in res]
+        for i in range(cfg["candidate_count"]):
+            grid[f"cand_{i+1}_name"] = [lkp.get(r[i]) if r and len(r)>i else None for r in matrix_res]
+
+    grid = grid.dropna(subset=['zone_label'])
     
-    gr = gr.dropna(subset=['zone_label'])
+    steps[3] = ("4. Daten zusammenführen", 2)
+    steps[4] = ("5. Auflösen & Speichern", 1)
+    render_step_status(status_ph, steps)
     
-    # 5. Dissolve
-    status_ph.markdown(f"**{name}**: ✂️ Dissolve & Clip...")
+    # --- 5. DISSOLVE ---
     try:
-        zones = gr[['zone_label','geometry']].copy(); zones['geometry']=zones.geometry.buffer(0)
+        zones = grid[['zone_label','geometry']].copy()
+        zones['geometry'] = zones.geometry.buffer(0)
         zones = zones.dissolve(by='zone_label', as_index=False)
-        cl = sub.copy(); cl['geometry'] = cl.geometry.buffer(0)
-        zones_clip = gpd.overlay(zones, cl, how='intersection')[['zone_label','geometry']]
-    except: zones_clip = zones
-    return gr, zones_clip
+        
+        if selected_tags:
+            valid = [t for t in selected_tags if t in all_stations.columns]
+            meta = all_stations[['final_label'] + valid].drop_duplicates('final_label')
+            zones = zones.merge(meta, left_on='zone_label', right_on='final_label', how='left')
+            if 'final_label' in zones.columns and 'final_label' != 'zone_label':
+                zones = zones.drop(columns=['final_label'])
+                
+        cl = sub_area.copy()
+        cl['geometry'] = cl.geometry.buffer(0)
+        zones_clip = gpd.overlay(zones, cl, how='intersection')
+        
+        steps[4] = ("5. Auflösen & Speichern", 2)
+        render_step_status(status_ph, steps, "Fertig")
+        
+    except Exception as e: 
+        steps[4] = ("5. Auflösen & Speichern", 3)
+        render_step_status(status_ph, steps, f"Fehler: {e}")
+        zones_clip = zones
+        
+    return grid, zones_clip
 
-# --- RUN ---
+# --- MAIN RUN ---
 if st.button("🚀 Start", type="primary"):
-    save_global_config(st.session_state.to_dict())
-    if not os.path.exists(st.session_state["area_file_path"]) or not os.path.exists(st.session_state["stations_file_path"]):
-        st.error("Pfade prüfen"); st.stop()
+    autosave()
+    if not (st.session_state["area_file_path"] and st.session_state["stations_file_path"]):
+        st.error("Pfade fehlen!")
+        st.stop()
 
-    with st.spinner("Lade Daten..."):
-        ga = gpd.read_file(st.session_state["area_file_path"]).to_crs(epsg=4326)
-        gs = gpd.read_file(st.session_state["stations_file_path"]).to_crs(epsg=4326)
+    with st.spinner("Lade Geodaten (Raw)..."):
+        ga = load_data_local(st.session_state["area_file_path"])
+        gs = load_data_local(st.session_state["stations_file_path"])
         if 'alt_name' not in gs: gs['alt_name'] = None
         if 'name' not in gs: gs['name'] = gs.index.astype(str)
         gs['final_label'] = gs['alt_name'].fillna(gs['name'])
 
-    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    cn = "".join([c for c in st.session_state["run_name"] if c.isalnum() or c in ('_','-')]).strip()
-    out = os.path.join(st.session_state["output_folder_path"], f"{ts}_{cn}"); os.makedirs(out, exist_ok=True)
+    out_dir = os.path.join(st.session_state["output_folder_path"], f"{st.session_state['run_name']}")
+    os.makedirs(out_dir, exist_ok=True)
     
-    conf = {"url":st.session_state["ors_base_url"],"profile":st.session_state["selected_profile"],
-            "limit":st.session_state["matrix_limit"],"hex_edge_length":st.session_state["hex_edge_length"],
-            "n_neighbors":st.session_state["n_neighbors"],"store_candidates":st.session_state["store_candidates"],
-            "candidate_count":st.session_state["candidate_count"]}
+    cfg_run = {
+        "url": st.session_state["ors_base_url"],
+        "profile": st.session_state["selected_profile"],
+        "matrix_limit": st.session_state["matrix_limit"],
+        "hex_edge_length": st.session_state["hex_edge_length"],
+        "n_neighbors": st.session_state["n_neighbors"],
+        "store_candidates": st.session_state["store_candidates"],
+        "candidate_count": st.session_state["candidate_count"]
+    }
     
-    all_z = []; batches = []; 
-    main_status = st.empty(); sub_status = st.empty()
+    # UI Container
+    status_header = st.empty()
+    status_list = st.empty()
+    progress_bar = st.empty()
+    
+    all_z = []; batches = []
+    tags_to_keep = st.session_state.get("selected_tags", [])
 
-    index_filename = f"{cn}_index.json" if cn else "batch_index.json"
-
-    if st.session_state["sequential_processing"]:
-        tot = len(ga); pr = st.progress(0)
-        for idx, row in ga.iterrows():
-            nm = f"Feat_{idx}"
+    items = [ga] if not st.session_state["sequential_processing"] else [gpd.GeoDataFrame([r], crs=ga.crs) for _,r in ga.iterrows()]
+    
+    for idx, sub_area in enumerate(items):
+        # Name ermitteln
+        nm = f"Zone_{idx}"
+        if st.session_state["sequential_processing"]:
             for c in ['name','NAME','GEN','bezirk']: 
-                if c in row and row[c]: nm=str(row[c]); break
-            sub = gpd.GeoDataFrame([row], crs=ga.crs)
-            
-            h_res, z_res = process_step(sub, gs, conf, main_status, sub_status, nm)
-            
-            if h_res is not None and not h_res.empty:
-                pd_dir = os.path.join(out, "parts"); os.makedirs(pd_dir, exist_ok=True)
-                hp = os.path.join(pd_dir, f"hex_{nm}.geojson")
-                h_res.to_file(hp, driver='GeoJSON')
-                
-                batches.append({"feature": nm, "path": hp, "original_area_index": idx})
-            
-            if z_res is not None:
-                all_z.append(z_res)
-                if st.session_state["save_single_zones"]:
-                    zd_dir = os.path.join(out, "single_zones"); os.makedirs(zd_dir, exist_ok=True)
-                    z_res.to_file(os.path.join(zd_dir, f"zones_{nm}.geojson"), driver='GeoJSON')
+                if c in sub_area.iloc[0] and sub_area.iloc[0][c]: nm=str(sub_area.iloc[0][c]); break
+        
+        # Header Update
+        status_header.markdown(f"### 📍 Verarbeite: **{nm}** ({idx+1}/{len(items)})")
+        
+        # Processing
+        h_res, z_res = process_single_area(sub_area, gs, cfg_run, status_list, progress_bar, nm, tags_to_keep)
+        
+        # Speichern Grid (Kandidaten)
+        if st.session_state["store_candidates"] and h_res is not None:
+            cand_dir = os.path.join(out_dir, "candidates_grid")
+            os.makedirs(cand_dir, exist_ok=True)
+            h_res.to_file(os.path.join(cand_dir, f"hex_{nm}.geojson"), driver='GeoJSON')
+        
+        # Speichern Zone
+        if z_res is not None:
+            all_z.append(z_res)
+            if st.session_state["save_single_zones"]:
+                z_res.to_file(os.path.join(out_dir, f"zones_{nm}.geojson"), driver='GeoJSON')
+            batches.append({"feature": nm, "path": f"zones_{nm}.geojson"})
 
-            pr.progress((idx+1)/tot)
-            
-        with open(os.path.join(out, index_filename), 'w', encoding='utf-8') as f:
+    status_header.markdown("### ✅ Verarbeitung abgeschlossen")
+    status_list.empty()
+    progress_bar.empty()
+    
+    if all_z:
+        fin = pd.concat(all_z, ignore_index=True)
+        fin_path = os.path.join(out_dir, "zones_combined.geojson")
+        fin.to_file(fin_path, driver='GeoJSON')
+        
+        # JSON Index
+        with open(os.path.join(out_dir, "index.json"), 'w', encoding='utf-8') as f:
             json.dump({
                 "meta": {
-                    "area_path": st.session_state["area_file_path"], 
-                    "stations_path": st.session_state["stations_file_path"],
-                    "run_name": st.session_state["run_name"]
-                }, 
+                    "run_name": st.session_state["run_name"],
+                    "selected_tags": tags_to_keep,
+                    "date": datetime.now().isoformat()
+                },
                 "batches": batches
             }, f, indent=4)
             
-    else:
-        h_res, z_res = process_step(ga, gs, conf, main_status, sub_status, "Gesamt")
-        if z_res is not None:
-            all_z.append(z_res)
-            hp = os.path.join(out, "hexagons_global.geojson")
-            h_res.to_file(hp, driver='GeoJSON')
-            with open(os.path.join(out, index_filename), 'w', encoding='utf-8') as f:
-                json.dump({
-                    "meta": {
-                        "area_path": st.session_state["area_file_path"], 
-                        "stations_path": st.session_state["stations_file_path"],
-                        "run_name": st.session_state["run_name"]
-                    }, 
-                    "batches": [{"feature": "Global", "path": hp, "original_area_index": None}]
-                }, f, indent=4)
-
-    main_status.text("Finalisiere...")
-    if all_z:
-        fin = pd.concat(all_z, ignore_index=True)
-        fin.to_file(os.path.join(out, f"{cn}_zones_combined.geojson"), driver='GeoJSON')
         st.balloons()
-        st.success(f"Fertig! Index: `{index_filename}` in {out}")
-    else: st.error("Leer")
+        st.success(f"Fertig! Ergebnis gespeichert in: {fin_path}")
+    else: 
+        st.error("Keine Zonen generiert.")
