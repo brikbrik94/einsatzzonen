@@ -33,6 +33,13 @@ def add_repo_to_path() -> None:
 
 add_repo_to_path()
 
+try:
+    from src.geojson_tools import select_files_dialog
+
+    GEO_TOOLS_AVAILABLE = True
+except Exception:
+    GEO_TOOLS_AVAILABLE = False
+
 st.set_page_config(page_title="Linien bereinigen (PolylineOffset Fix)", layout="wide")
 st.title("🚧 Linien bereinigen (PolylineOffset Fix)")
 st.markdown(
@@ -166,7 +173,35 @@ def process_geometry(
     return geometry, stats
 
 
-uploaded = st.file_uploader("GeoJSON (FeatureCollection) hochladen", type=["geojson", "json"])
+st.sidebar.header("Eingabe")
+input_mode = st.sidebar.radio(
+    "Dateiauswahl", ["Upload (Browser)", "Lokale Auswahl (Tkinter)"]
+)
+
+selected_paths = st.sidebar.session_state.setdefault("line_cleaner_paths", [])
+
+if input_mode == "Upload (Browser)":
+    uploaded_files = st.sidebar.file_uploader(
+        "GeoJSON-Dateien hochladen", type=["geojson", "json"], accept_multiple_files=True
+    )
+    selected_paths = []
+else:
+    if not GEO_TOOLS_AVAILABLE:
+        st.sidebar.warning(
+            "Tkinter-Dateidialoge sind nicht verfügbar (src.geojson_tools fehlt). Bitte Upload nutzen."
+        )
+    else:
+        if st.sidebar.button("Dateien wählen (Tk)"):
+            chosen = select_files_dialog("GeoJSON-Dateien wählen")
+            if chosen:
+                st.sidebar.session_state["line_cleaner_paths"] = chosen
+                selected_paths = chosen
+        selected_paths = st.sidebar.session_state.get("line_cleaner_paths", [])
+
+inplace_write = st.sidebar.checkbox(
+    "Ausgewählte Dateien überschreiben (in-place)", value=False,
+    help="Nur für lokale Auswahl. Schreibt die bereinigte GeoJSON direkt zurück."
+)
 
 min_seg_m = st.number_input(
     "Minimale Segmentlänge (m) – Punkte mit kürzerem Abstand werden entfernt",
@@ -190,105 +225,156 @@ if simplify_m > 0 and (not SHAPELY_AVAILABLE or not PYPROJ_AVAILABLE):
         "Simplify benötigt shapely und pyproj; mindestens ein Paket fehlt. Der Schritt wird übersprungen."
     )
 
+def clean_feature_collection(data: Dict[str, Any], min_seg_m: float, simplify_m: float, keep_ends: bool):
+    cleaned_features = []
+    aggregate = {
+        "features_total": len(data.get("features", [])),
+        "lines_total": 0,
+        "points_in_total": 0,
+        "points_out_total": 0,
+        "features_changed": 0,
+    }
+
+    for feature in data.get("features", []):
+        geom = feature.get("geometry")
+        if not geom:
+            cleaned_features.append(feature)
+            continue
+        new_geom, geom_stats = process_geometry(
+            geom, min_seg_m=min_seg_m, simplify_m=simplify_m, keep_ends=keep_ends
+        )
+        aggregate["lines_total"] += geom_stats["lines"]
+        aggregate["points_in_total"] += geom_stats["points_in"]
+        aggregate["points_out_total"] += geom_stats["points_out"]
+        aggregate["features_changed"] += geom_stats["changed"]
+
+        new_feature = feature.copy()
+        new_feature["geometry"] = new_geom
+        cleaned_features.append(new_feature)
+
+    return cleaned_features, aggregate
+
+
+def maybe_union_lines(cleaned_features: List[Dict[str, Any]]):
+    final_features = cleaned_features
+    if not merge_features:
+        return final_features
+    if not SHAPELY_AVAILABLE:
+        st.warning("Shapely ist nicht verfügbar; Zusammenfassung wird übersprungen.")
+        return final_features
+
+    line_geoms = []
+    other_features = []
+    for feat in cleaned_features:
+        geom = feat.get("geometry") or {}
+        gtype = geom.get("type")
+        coords = geom.get("coordinates")
+        try:
+            if gtype == "LineString":
+                line_geoms.append(LineString(coords))
+            elif gtype == "MultiLineString":
+                line_geoms.append(MultiLineString(coords))
+            else:
+                other_features.append(feat)
+        except Exception:
+            other_features.append(feat)
+
+    if line_geoms:
+        try:
+            merged = unary_union(line_geoms)
+            if merged.is_empty:
+                st.warning("Union der Linien ist leer – übersprungen.")
+            else:
+                merged_geom = merged
+                if merged_geom.geom_type == "GeometryCollection":
+                    merged_parts = [g for g in merged_geom.geoms if g.geom_type in {"LineString", "MultiLineString"}]
+                    if merged_parts:
+                        merged_geom = unary_union(merged_parts)
+                geojson_geom = mapping(merged_geom)
+                merged_feature = {"type": "Feature", "properties": {}, "geometry": geojson_geom}
+                final_features = other_features + [merged_feature]
+        except Exception as exc:
+            st.warning(f"Union der Linien fehlgeschlagen: {exc}")
+    return final_features
+
+
+def load_geojson_from_path(path: str):
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def process_payload(name: str, payload: Dict[str, Any]):
+    if payload.get("type") != "FeatureCollection" or "features" not in payload:
+        st.error(f"{name}: Datei muss eine GeoJSON FeatureCollection enthalten.")
+        return None, None
+
+    cleaned_features, aggregate = clean_feature_collection(
+        payload, min_seg_m=min_seg_m, simplify_m=simplify_m, keep_ends=keep_ends
+    )
+    final_features = maybe_union_lines(cleaned_features)
+    cleaned_geojson = {"type": "FeatureCollection", "features": final_features}
+    return cleaned_geojson, aggregate
+
+
 process_clicked = st.button("Bereinigen")
 
 if process_clicked:
-    if not uploaded:
-        st.error("Bitte eine GeoJSON-Datei hochladen.")
+    payloads: List[Tuple[str, Dict[str, Any]]] = []
+
+    if input_mode == "Upload (Browser)":
+        if not uploaded_files:
+            st.error("Bitte mindestens eine GeoJSON-Datei hochladen.")
+        else:
+            for uf in uploaded_files:
+                try:
+                    data = json.loads(uf.read().decode("utf-8"))
+                    payloads.append((uf.name, data))
+                except Exception as exc:
+                    st.error(f"{uf.name}: GeoJSON konnte nicht gelesen werden: {exc}")
     else:
-        try:
-            data = json.loads(uploaded.read().decode("utf-8"))
-        except Exception as exc:
-            st.error(f"GeoJSON konnte nicht gelesen werden: {exc}")
-            data = None
+        if not GEO_TOOLS_AVAILABLE:
+            st.error("Lokale Dateiauswahl nicht verfügbar; bitte Upload nutzen.")
+        elif not selected_paths:
+            st.error("Bitte mindestens eine Datei über den Tk-Dialog auswählen.")
+        else:
+            for path in selected_paths:
+                try:
+                    payloads.append((os.path.basename(path), load_geojson_from_path(path)))
+                except Exception as exc:
+                    st.error(f"{path}: GeoJSON konnte nicht gelesen werden: {exc}")
 
-        if data:
-            if data.get("type") != "FeatureCollection" or "features" not in data:
-                st.error("Die Datei muss eine GeoJSON FeatureCollection enthalten.")
-            else:
-                cleaned_features = []
-                aggregate = {
-                    "features_total": len(data["features"]),
-                    "lines_total": 0,
-                    "points_in_total": 0,
-                    "points_out_total": 0,
-                    "features_changed": 0,
-                }
+    if payloads:
+        st.success(f"Starte Bereinigung für {len(payloads)} Datei(en).")
+        for name, data in payloads:
+            cleaned_geojson, aggregate = process_payload(name, data)
+            if not cleaned_geojson:
+                continue
 
-                for feature in data.get("features", []):
-                    geom = feature.get("geometry")
-                    if not geom:
-                        cleaned_features.append(feature)
-                        continue
-                    new_geom, geom_stats = process_geometry(
-                        geom, min_seg_m=min_seg_m, simplify_m=simplify_m, keep_ends=keep_ends
-                    )
-                    aggregate["lines_total"] += geom_stats["lines"]
-                    aggregate["points_in_total"] += geom_stats["points_in"]
-                    aggregate["points_out_total"] += geom_stats["points_out"]
-                    aggregate["features_changed"] += geom_stats["changed"]
+            col1, col2, col3, col4, col5 = st.columns(5)
+            col1.metric("Features gesamt", aggregate["features_total"])
+            col2.metric("Linien gesamt", aggregate["lines_total"])
+            col3.metric("Punkte vorher", aggregate["points_in_total"])
+            col4.metric("Punkte nachher", aggregate["points_out_total"])
+            col5.metric("Geänderte Features", aggregate["features_changed"])
 
-                    new_feature = feature.copy()
-                    new_feature["geometry"] = new_geom
-                    cleaned_features.append(new_feature)
+            base_name, _ = os.path.splitext(name)
+            out_name = f"{base_name}.cleaned.geojson"
+            st.download_button(
+                f"{out_name} herunterladen",
+                data=json.dumps(cleaned_geojson, ensure_ascii=False, indent=2),
+                file_name=out_name,
+                mime="application/geo+json",
+            )
 
-                final_features = cleaned_features
+            if inplace_write and input_mode == "Lokale Auswahl (Tkinter)":
+                try:
+                    original_path = next((p for p in selected_paths if os.path.basename(p) == name), None)
+                    if original_path:
+                        with open(original_path, "w", encoding="utf-8") as f:
+                            json.dump(cleaned_geojson, f, ensure_ascii=False, indent=2)
+                        st.info(f"{original_path} wurde überschrieben.")
+                except Exception as exc:
+                    st.warning(f"In-place-Schreiben für {name} fehlgeschlagen: {exc}")
 
-                if merge_features:
-                    if not SHAPELY_AVAILABLE:
-                        st.warning("Shapely ist nicht verfügbar; Zusammenfassung wird übersprungen.")
-                    else:
-                        line_geoms = []
-                        other_features = []
-                        for feat in cleaned_features:
-                            geom = feat.get("geometry") or {}
-                            gtype = geom.get("type")
-                            coords = geom.get("coordinates")
-                            try:
-                                if gtype == "LineString":
-                                    line_geoms.append(LineString(coords))
-                                elif gtype == "MultiLineString":
-                                    line_geoms.append(MultiLineString(coords))
-                                else:
-                                    other_features.append(feat)
-                            except Exception:
-                                other_features.append(feat)
-
-                        if line_geoms:
-                            try:
-                                merged = unary_union(line_geoms)
-                                if merged.is_empty:
-                                    st.warning("Union der Linien ist leer – übersprungen.")
-                                else:
-                                    merged_geom = merged
-                                    if merged_geom.geom_type == "GeometryCollection":
-                                        merged_parts = [g for g in merged_geom.geoms if g.geom_type in {"LineString", "MultiLineString"}]
-                                        if merged_parts:
-                                            merged_geom = unary_union(merged_parts)
-                                    geojson_geom = mapping(merged_geom)
-                                    merged_feature = {"type": "Feature", "properties": {}, "geometry": geojson_geom}
-                                    final_features = other_features + [merged_feature]
-                            except Exception as exc:
-                                st.warning(f"Union der Linien fehlgeschlagen: {exc}")
-
-                cleaned_geojson = {"type": "FeatureCollection", "features": final_features}
-
-                st.success("Bereinigung abgeschlossen.")
-                col1, col2, col3, col4, col5 = st.columns(5)
-                col1.metric("Features gesamt", aggregate["features_total"])
-                col2.metric("Linien gesamt", aggregate["lines_total"])
-                col3.metric("Punkte vorher", aggregate["points_in_total"])
-                col4.metric("Punkte nachher", aggregate["points_out_total"])
-                col5.metric("Geänderte Features", aggregate["features_changed"])
-
-                base_name = os.path.splitext(uploaded.name)[0]
-                out_name = f"{base_name}.cleaned.geojson"
-                st.download_button(
-                    "Bereinigte GeoJSON herunterladen",
-                    data=json.dumps(cleaned_geojson, ensure_ascii=False, indent=2),
-                    file_name=out_name,
-                    mime="application/geo+json",
-                )
-
-                with st.expander("Bereinigte GeoJSON Vorschau"):
-                    st.json(cleaned_geojson)
+            with st.expander(f"Bereinigte GeoJSON Vorschau – {out_name}"):
+                st.json(cleaned_geojson)
