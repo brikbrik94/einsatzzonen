@@ -102,6 +102,20 @@ def process_coloring(
     """
     Färbt Zonen basierend auf Nachbarschaft (Graph Coloring).
     """
+    if gdf is None or gdf.empty:
+        columns = list(getattr(gdf, "columns", []))
+        if "geometry" not in columns:
+            columns.append("geometry")
+
+        empty_gdf = gpd.GeoDataFrame(columns=columns, geometry="geometry", crs=getattr(gdf, "crs", None))
+        stats = {
+            "num_features": 0,
+            "num_colors": 0,
+            "components": 0,
+            "isolates": []
+        }
+        return empty_gdf, existing_colors or {}, stats
+
     # Sicherstellen, dass Geometrie sauber ist
     gdf = repair_geometry(gdf).reset_index(drop=True)
 
