@@ -178,7 +178,7 @@ input_mode = st.sidebar.radio(
     "Dateiauswahl", ["Upload (Browser)", "Lokale Auswahl (Tkinter)"]
 )
 
-selected_paths = st.sidebar.session_state.setdefault("line_cleaner_paths", [])
+selected_paths = st.session_state.setdefault("line_cleaner_paths", [])
 
 if input_mode == "Upload (Browser)":
     uploaded_files = st.sidebar.file_uploader(
@@ -194,9 +194,9 @@ else:
         if st.sidebar.button("Dateien wählen (Tk)"):
             chosen = select_files_dialog("GeoJSON-Dateien wählen")
             if chosen:
-                st.sidebar.session_state["line_cleaner_paths"] = chosen
+                st.session_state["line_cleaner_paths"] = chosen
                 selected_paths = chosen
-        selected_paths = st.sidebar.session_state.get("line_cleaner_paths", [])
+        selected_paths = st.session_state.get("line_cleaner_paths", [])
 
 inplace_write = st.sidebar.checkbox(
     "Ausgewählte Dateien überschreiben (in-place)", value=False,
