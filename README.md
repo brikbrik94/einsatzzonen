@@ -86,6 +86,27 @@ Fügt einzelne Ergebnisse (z.B. aus verschiedenen Bezirken) zu einer großen Kar
 
 ---
 
+## 📑 Seitenübersicht (Streamlit)
+
+Alle Seiten sind über die Streamlit-Seitenleiste erreichbar:
+
+| Seite | Zweck |
+| :--- | :--- |
+| **🏠 Home** (`Home.py`) | Einstiegsseite mit einem kurzen Überblick über den 3-Schritt-Prozess und Hinweise zu den gespeicherten Config-Dateien. |
+| **🚒 Generator (Step 1)** (`pages/1_Generator.py`) | Erstellt das Hexagon-Gitter, filtert Dienststellen, berechnet erste Grobzonen und speichert Batch-Index + Kandidaten für die Nachberechnung. |
+| **🚑 Refiner (Step 2)** (`pages/2_Refiner.py`) | Lädt den Batch-Index, verfeinert die Zonen mit `driving-emergency` Profil, Multithreading und Fallback-Routing; erzeugt präzise, geschnittene GeoJSONs. |
+| **🧩 Resolver (Step 3)** (`pages/3_Resolver.py`) | Fügt mehrere GeoJSON-Teilresultate zusammen, vereinheitlicht Namensfelder, löst Grenzen identischer Zonen auf und erstellt eine finale Datei. |
+| **📜 GeoJSON Tag Editor** (`pages/4_Tag_Editor.py`) | Interaktiver Tabellen-Editor für Attribute: Werte direkt ändern, Spalten hinzufügen/umbenennen/löschen und Änderungen speichern. |
+| **🧹 GeoJSON Tag Cleaner** (`pages/5_Tag_Cleaner.py`) | Analysiert alle Attribute, zeigt Nutzungsstatistiken und entfernt unerwünschte Tags zur Größenreduktion. |
+| **🎨 Zonen-Färbung** (`pages/6_Zonen_Faerbung.py`) | Berechnet eine konfliktfreie Einfärbung von Zonen, visualisiert das Ergebnis und erlaubt den Download der gefärbten GeoJSON-Datei. |
+| **🏢 Leitstellen Konfiguration** (`pages/7_Leitstellen_Config.py`) | Verwalten von Leitstellen-Zuordnungen: Mapping von Bezirks-Codes und Bundesländern zu Leitstellen, inklusive Speichern in JSON-Configs. |
+| **🔀 Zonen Splitter** (`pages/8_Zonen_Splitter.py`) | Ordnet Features automatisch zu Leitstellen per Funkkennung oder Gemeinde/Bundesland (mit Namensbereinigung) und schreibt pro Leitstelle eigene Dateien. |
+| **🔄 GML Konverter** (`pages/9_GML_Converter.py`) | Konvertiert österreichische GML-Dateien nach GeoJSON (WGS84) mit automatischer Achsen-Reparatur und Höhen-Entfernung. |
+| **🧩 General Splitter** (`pages/10_General_Splitter.py`) | Teilt eine GeoJSON-Datei nach einem beliebigen Attribut auf; optionales Explode von Listen/String-Splits und optionales Dissolve pro Zielwert. |
+| **🏷️ File Renamer** (`pages/11_File_Renamer.py`) | Massen-Umbenenner für Dateiserien; unterstützt Suchen/Ersetzen oder Regex und eignet sich zum Bereinigen des Splitter-Outputs. |
+
+---
+
 ## ⚙️ Wichtige Einstellungen
 
 | Einstellung | Empfehlung | Beschreibung |
