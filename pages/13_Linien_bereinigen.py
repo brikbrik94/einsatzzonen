@@ -250,5 +250,3 @@ if process_clicked:
 
                 with st.expander("Bereinigte GeoJSON Vorschau"):
                     st.json(cleaned_geojson)
-root@8d35261164c4:/workspace/einsatzzonen#
-
