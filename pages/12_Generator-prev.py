@@ -161,9 +161,8 @@ def filter_stations_smart(area, stations, n):
     # Temporär metrisch für korrekte Distanzen
     stations_metric = stations.to_crs(epsg=3857)
     
-    # 1. Wachen im Gebiet finden (mit kleinem Buffer für Randfälle)
-    buf = area.copy(); buf['geometry'] = buf.geometry.buffer(0.05)
-    inside = gpd.sjoin(stations, buf, how="inner", predicate="intersects")
+    # 1. Wachen im Gebiet finden (ohne zusätzlichen Buffer)
+    inside = gpd.sjoin(stations, area, how="inner", predicate="intersects")
     
     relevant_ids = set()
     
