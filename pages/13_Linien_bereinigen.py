@@ -9,7 +9,9 @@ import streamlit as st
 # Optional geometry tooling
 try:
     from shapely.geometry import LineString, MultiLineString
+    from shapely.geometry import mapping
     from shapely.ops import transform as shapely_transform
+    from shapely.ops import unary_union
 
     SHAPELY_AVAILABLE = True
 except Exception:
@@ -181,6 +183,7 @@ simplify_m = st.number_input(
     step=0.5,
 )
 keep_ends = st.checkbox("Start- und Endpunkte beibehalten", value=True)
+merge_features = st.checkbox("Linien-Features zusammenfassen (Union)", value=False)
 
 if simplify_m > 0 and (not SHAPELY_AVAILABLE or not PYPROJ_AVAILABLE):
     st.warning(
@@ -229,7 +232,46 @@ if process_clicked:
                     new_feature["geometry"] = new_geom
                     cleaned_features.append(new_feature)
 
-                cleaned_geojson = {"type": "FeatureCollection", "features": cleaned_features}
+                final_features = cleaned_features
+
+                if merge_features:
+                    if not SHAPELY_AVAILABLE:
+                        st.warning("Shapely ist nicht verfügbar; Zusammenfassung wird übersprungen.")
+                    else:
+                        line_geoms = []
+                        other_features = []
+                        for feat in cleaned_features:
+                            geom = feat.get("geometry") or {}
+                            gtype = geom.get("type")
+                            coords = geom.get("coordinates")
+                            try:
+                                if gtype == "LineString":
+                                    line_geoms.append(LineString(coords))
+                                elif gtype == "MultiLineString":
+                                    line_geoms.append(MultiLineString(coords))
+                                else:
+                                    other_features.append(feat)
+                            except Exception:
+                                other_features.append(feat)
+
+                        if line_geoms:
+                            try:
+                                merged = unary_union(line_geoms)
+                                if merged.is_empty:
+                                    st.warning("Union der Linien ist leer – übersprungen.")
+                                else:
+                                    merged_geom = merged
+                                    if merged_geom.geom_type == "GeometryCollection":
+                                        merged_parts = [g for g in merged_geom.geoms if g.geom_type in {"LineString", "MultiLineString"}]
+                                        if merged_parts:
+                                            merged_geom = unary_union(merged_parts)
+                                    geojson_geom = mapping(merged_geom)
+                                    merged_feature = {"type": "Feature", "properties": {}, "geometry": geojson_geom}
+                                    final_features = other_features + [merged_feature]
+                            except Exception as exc:
+                                st.warning(f"Union der Linien fehlgeschlagen: {exc}")
+
+                cleaned_geojson = {"type": "FeatureCollection", "features": final_features}
 
                 st.success("Bereinigung abgeschlossen.")
                 col1, col2, col3, col4, col5 = st.columns(5)
