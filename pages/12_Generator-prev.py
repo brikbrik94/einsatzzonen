@@ -5,10 +5,16 @@ import requests
 import os
 import json
 import math
-import tkinter as tk
-from tkinter import filedialog
 from datetime import datetime
 from shapely.geometry import Polygon
+
+from src.geojson_tools import (
+    load_config,
+    save_config,
+    load_geodataframe_raw,
+    select_file_dialog,
+    select_folder_dialog,
+)
 
 # --- KONFIGURATION ---
 st.set_page_config(page_title="Einsatzzonen Generator (Step 1)", layout="wide")
@@ -17,36 +23,42 @@ st.title("🚒 Einsatzzonen Generator (Step 1)")
 st.markdown("Erstellt Hexagon-Gitter (Outbound-Logik) mit **erweitertem Nachbarschafts-Pool**.")
 
 # --- HELPER ---
-def load_global_config():
-    if os.path.exists(GLOBAL_CONFIG_FILE):
-        try: return json.load(open(GLOBAL_CONFIG_FILE, 'r', encoding='utf-8'))
-        except: return {}
-    return {}
-
-def save_global_config(data):
-    try: json.dump(data, open(GLOBAL_CONFIG_FILE, 'w', encoding='utf-8'), indent=4, ensure_ascii=False)
-    except: pass
-
-def select_file_dialog(title, ft):
-    root = tk.Tk(); root.withdraw(); root.wm_attributes('-topmost', 1)
-    f = filedialog.askopenfilename(title=title, filetypes=ft)
-    root.destroy(); return f
-
-def select_folder_dialog():
-    root = tk.Tk(); root.withdraw(); root.wm_attributes('-topmost', 1)
-    d = filedialog.askdirectory()
-    root.destroy(); return d
+def load_station_tags_df(filepath):
+    try:
+        gdf = load_geodataframe_raw(filepath)
+        cols = [c for c in gdf.columns if c != "geometry"]
+        sel = st.session_state.get("selected_tags", [])
+        data = [{"selected": c in sel, "name": c, "count": gdf[c].count()} for c in cols]
+        return pd.DataFrame(data).sort_values(by=["selected", "count"], ascending=[False, False])
+    except Exception:
+        return pd.DataFrame()
 
 # --- STATE ---
-cfg = load_global_config()
+cfg = load_config(GLOBAL_CONFIG_FILE)
 defaults = {
-    "ors_base_url": "http://127.0.0.1:8082/ors/v2", "available_profiles": ["driving-car", "driving-emergency"],
-    "selected_profile": "driving-car", "hex_edge_length": 500, "n_neighbors": 10, "matrix_limit": 2500,
-    "run_name": "Run_01", "output_folder_path": os.getcwd(), "area_file_path": "", "stations_file_path": "",
-    "sequential_processing": False, "store_candidates": False, "candidate_count": 5, "save_single_zones": True
+    "ors_base_url": "http://127.0.0.1:8082/ors/v2",
+    "available_profiles": ["driving-car", "driving-emergency"],
+    "selected_profile": "driving-car",
+    "hex_edge_length": 500,
+    "n_neighbors": 10,
+    "matrix_limit": 2500,
+    "run_name": "Run_01",
+    "output_folder_path": os.getcwd(),
+    "area_file_path": "",
+    "stations_file_path": "",
+    "sequential_processing": False,
+    "store_candidates": False,
+    "candidate_count": 5,
+    "save_single_zones": True,
+    "selected_tags": [],
 }
 for k, v in defaults.items():
-    if k not in st.session_state: st.session_state[k] = cfg.get(k, v)
+    if k not in st.session_state:
+        st.session_state[k] = cfg.get(k, v)
+
+
+def autosave():
+    save_config(GLOBAL_CONFIG_FILE, {k: st.session_state.get(k, defaults[k]) for k in defaults.keys()})
 
 # --- UI ---
 with st.sidebar:
@@ -64,15 +76,15 @@ with st.sidebar:
     c1,c2 = st.columns([3,1])
     with c2: 
         if st.button("📂", key="b1"): 
-            f = select_file_dialog("Gebiet", [("GeoJSON","*.geojson")])
-            if f: st.session_state["area_file_path"]=f; st.rerun()
+            f = select_file_dialog("Gebiet")
+            if f: st.session_state["area_file_path"]=f; autosave(); st.rerun()
     with c1: st.session_state["area_file_path"] = st.text_input("Gebiet", st.session_state["area_file_path"])
 
     c3,c4 = st.columns([3,1])
     with c4:
         if st.button("📂", key="b2"): 
-            f = select_file_dialog("DS", [("GeoJSON","*.geojson")])
-            if f: st.session_state["stations_file_path"]=f; st.rerun()
+            f = select_file_dialog("DS")
+            if f: st.session_state["stations_file_path"]=f; autosave(); st.rerun()
     with c3: st.session_state["stations_file_path"] = st.text_input("Dienststellen", st.session_state["stations_file_path"])
 
     st.markdown("---")
@@ -80,9 +92,26 @@ with st.sidebar:
     c5,c6 = st.columns([3,1])
     with c6:
         if st.button("📂", key="b3"):
-            d = select_folder_dialog(); 
-            if d: st.session_state["output_folder_path"]=d; st.rerun()
+            d = select_folder_dialog("Output");
+            if d: st.session_state["output_folder_path"]=d; autosave(); st.rerun()
     with c5: st.session_state["output_folder_path"] = st.text_input("Output", st.session_state["output_folder_path"])
+
+if st.session_state["stations_file_path"] and os.path.exists(st.session_state["stations_file_path"]):
+    st.markdown("---")
+    with st.expander("Datenfelder wählen (Tags)"):
+        tags_df = load_station_tags_df(st.session_state["stations_file_path"])
+        if not tags_df.empty:
+            with st.form("tag_form"):
+                sel = []
+                st.write("Wähle Spalten, die in das Ergebnis übernommen werden sollen:")
+                for _, row in tags_df.iterrows():
+                    label = f"{row['name']} ({row['count']})"
+                    if st.checkbox(label, value=row['selected'], key=f"tag_{row['name']}"):
+                        sel.append(row['name'])
+                if st.form_submit_button("💾 Auswahl Speichern"):
+                    st.session_state["selected_tags"] = sel
+                    autosave()
+                    st.rerun()
 
 with st.expander("⚙️ Erweitert", expanded=False):
     c1,c2 = st.columns(2)
@@ -236,20 +265,37 @@ def process_step(sub, stat, cfg, status_ph, batch_ph, name):
     try:
         zones = gr[['zone_label','geometry']].copy(); zones['geometry']=zones.geometry.buffer(0)
         zones = zones.dissolve(by='zone_label', as_index=False)
+
+        valid_tags = []
+        if cfg.get("selected_tags"):
+            valid = [t for t in cfg["selected_tags"] if t in stat.columns]
+            if valid:
+                valid_tags = valid
+                meta = stat[['final_label'] + valid].drop_duplicates('final_label')
+                zones = zones.merge(meta, left_on='zone_label', right_on='final_label', how='left')
+                if 'final_label' in zones.columns and 'final_label' != 'zone_label':
+                    zones = zones.drop(columns=['final_label'])
+
         cl = sub.copy(); cl['geometry'] = cl.geometry.buffer(0)
-        zones_clip = gpd.overlay(zones, cl, how='intersection')[['zone_label','geometry']]
+        keep_cols = ['zone_label', 'geometry'] + valid_tags
+        keep_cols = [c for c in keep_cols if c in zones.columns]
+        zones_clip = gpd.overlay(zones, cl, how='intersection')[keep_cols]
     except: zones_clip = zones
     return gr, zones_clip
 
 # --- RUN ---
 if st.button("🚀 Start", type="primary"):
-    save_global_config(st.session_state.to_dict())
+    autosave()
     if not os.path.exists(st.session_state["area_file_path"]) or not os.path.exists(st.session_state["stations_file_path"]):
         st.error("Pfade prüfen"); st.stop()
 
     with st.spinner("Lade Daten..."):
-        ga = gpd.read_file(st.session_state["area_file_path"]).to_crs(epsg=4326)
-        gs = gpd.read_file(st.session_state["stations_file_path"]).to_crs(epsg=4326)
+        ga = load_geodataframe_raw(st.session_state["area_file_path"])
+        if ga.crs and ga.crs.to_string() != "EPSG:4326":
+            ga = ga.to_crs(epsg=4326)
+        gs = load_geodataframe_raw(st.session_state["stations_file_path"])
+        if gs.crs and gs.crs.to_string() != "EPSG:4326":
+            gs = gs.to_crs(epsg=4326)
         if 'alt_name' not in gs: gs['alt_name'] = None
         if 'name' not in gs: gs['name'] = gs.index.astype(str)
         gs['final_label'] = gs['alt_name'].fillna(gs['name'])
@@ -261,7 +307,7 @@ if st.button("🚀 Start", type="primary"):
     conf = {"url":st.session_state["ors_base_url"],"profile":st.session_state["selected_profile"],
             "limit":st.session_state["matrix_limit"],"hex_edge_length":st.session_state["hex_edge_length"],
             "n_neighbors":st.session_state["n_neighbors"],"store_candidates":st.session_state["store_candidates"],
-            "candidate_count":st.session_state["candidate_count"]}
+            "candidate_count":st.session_state["candidate_count"], "selected_tags": st.session_state.get("selected_tags", [])}
     
     all_z = []; batches = []; 
     main_status = st.empty(); sub_status = st.empty()
