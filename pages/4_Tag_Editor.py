@@ -8,8 +8,8 @@ import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.geojson_tools import (
-    select_file_dialog, 
-    load_geodataframe
+    select_file_dialog,
+    load_geodataframe_raw
 )
 
 # --- SETUP ---
@@ -23,13 +23,23 @@ if "editor_filepath" not in st.session_state: st.session_state["editor_filepath"
 if "editor_unsaved_changes" not in st.session_state: st.session_state["editor_unsaved_changes"] = False
 
 # --- HELPER ---
-def save_to_disk():
+def save_to_disk(in_place=True):
     if st.session_state["editor_gdf"] is not None and st.session_state["editor_filepath"]:
         try:
-            # Speichern
-            st.session_state["editor_gdf"].to_file(st.session_state["editor_filepath"], driver='GeoJSON')
+            target_path = st.session_state["editor_filepath"]
+
+            if not in_place:
+                base_name = os.path.splitext(os.path.basename(target_path))[0]
+                target_path = os.path.join(
+                    os.path.dirname(target_path),
+                    f"{base_name}_edited.geojson"
+                )
+
+            st.session_state["editor_gdf"].to_file(target_path, driver='GeoJSON')
             st.session_state["editor_unsaved_changes"] = False
-            st.toast(f"✅ Datei erfolgreich gespeichert!", icon="💾")
+
+            success_msg = "Original überschrieben" if in_place else f"Als Kopie gespeichert: `{os.path.basename(target_path)}`"
+            st.toast(f"✅ Datei erfolgreich gespeichert! ({success_msg})", icon="💾")
         except Exception as e:
             st.error(f"Fehler beim Speichern: {e}")
 
@@ -40,7 +50,7 @@ with st.sidebar:
         f = select_file_dialog()
         if f:
             try:
-                st.session_state["editor_gdf"] = load_geodataframe(f)
+                st.session_state["editor_gdf"] = load_geodataframe_raw(f)
                 st.session_state["editor_filepath"] = f
                 st.session_state["editor_unsaved_changes"] = False
                 st.rerun()
@@ -51,15 +61,22 @@ with st.sidebar:
         fname = os.path.basename(st.session_state['editor_filepath'])
         st.success(f"Offen: `{fname}`")
         st.caption(f"{len(st.session_state['editor_gdf'])} Features")
-        
+
         st.markdown("---")
         st.header("💾 Speichern")
-        
+
         if st.session_state["editor_unsaved_changes"]:
             st.warning("⚠️ Ungespeicherte Änderungen!")
-        
+
+        save_mode = st.radio(
+            "Speichermodus",
+            ["In-Place (Original überschreiben)", "Kopie (_edited)"],
+            index=0,
+            key="editor_save_mode"
+        )
+
         if st.button("Auf Festplatte schreiben", type="primary" if st.session_state["editor_unsaved_changes"] else "secondary"):
-            save_to_disk()
+            save_to_disk(in_place="In-Place" in save_mode)
 
 
 # --- MAIN AREA ---
@@ -80,7 +97,7 @@ if st.session_state["editor_gdf"] is not None:
         edited_df = st.data_editor(
             df_display,
             num_rows="fixed", # Keine Zeilen hinzufügen/löschen hier (Geometrie würde fehlen)
-            use_container_width=True,
+            width="stretch",
             height=600,
             key="data_editor_widget"
         )

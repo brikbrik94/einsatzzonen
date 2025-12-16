@@ -9,9 +9,9 @@ from datetime import datetime
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.geojson_tools import (
-    select_files_dialog, 
-    select_folder_dialog, 
-    load_geodataframe
+    select_files_dialog,
+    select_folder_dialog,
+    load_geodataframe_raw
 )
 
 # --- SETUP ---
@@ -115,8 +115,8 @@ if st.session_state["res_input_files"]:
             for i, fpath in enumerate(files):
                 status.text(f"Lade {i+1}/{len(files)}: {os.path.basename(fpath)}")
                 
-                # NUTZUNG DES ZENTRALEN TOOLS (inkl. Repair)
-                tmp = load_geodataframe(fpath)
+                # Ohne Geometrie-Reparatur laden
+                tmp = load_geodataframe_raw(fpath)
                 
                 # Check ob Spalte existiert
                 if target_col not in tmp.columns:

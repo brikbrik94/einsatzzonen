@@ -73,7 +73,7 @@ if st.session_state["gml_input_path"]:
     
     with c2:
         st.write("##") # Spacer
-        if st.button("🚀 Jetzt Konvertieren", type="primary", use_container_width=True):
+        if st.button("🚀 Jetzt Konvertieren", type="primary", width="stretch"):
             
             target_path = os.path.join(st.session_state["gml_output_dir"], out_filename)
             

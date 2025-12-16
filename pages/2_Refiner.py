@@ -12,7 +12,7 @@ from datetime import datetime
 # --- IMPORT SHARED TOOLS ---
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.geojson_tools import (
-    load_config, save_config, select_files_dialog, select_folder_dialog, load_geodataframe
+    load_config, save_config, select_files_dialog, select_folder_dialog, load_geodataframe_raw
 )
 
 st.set_page_config(page_title="Refiner (Smart)", layout="wide")
@@ -91,7 +91,7 @@ def route_hex(row, lookup, conf):
     except: return row.get('zone_label'), row.get('duration', 9999)
 
 def process_file_and_clip(hex_path, st_lookup, conf, area_gdf, feat_idx, metrics_ph, prog_bar, station_attrs=None):
-    gdf = load_geodataframe(hex_path) # Robuster Loader
+    gdf = load_geodataframe_raw(hex_path)
     
     # Prüfen ob Kandidaten vorhanden sind
     has_cands = "cand_1_name" in gdf.columns
@@ -231,11 +231,11 @@ if st.button("🚀 Start Smart-Refiner", type="primary"):
                     tags_to_load = js["meta"].get("selected_tags", [])
 
                     if os.path.exists(ap):
-                        area_gdf = load_geodataframe(ap).to_crs(epsg=4326)
-                    
+                        area_gdf = load_geodataframe_raw(ap).to_crs(epsg=4326)
+
                     if os.path.exists(sp):
                         # Lade DS komplett für Lookup UND Attribute
-                        raw_st = load_geodataframe(sp).to_crs(epsg=4326)
+                        raw_st = load_geodataframe_raw(sp).to_crs(epsg=4326)
                         if 'alt_name' not in raw_st: raw_st['alt_name'] = None
                         if 'name' not in raw_st: raw_st['name'] = raw_st.index.astype(str)
                         raw_st['final_label'] = raw_st['alt_name'].fillna(raw_st['name'])

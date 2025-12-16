@@ -8,8 +8,8 @@ import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.geojson_tools import (
-    select_file_dialog, 
-    load_geodataframe
+    select_file_dialog,
+    load_geodataframe_raw
 )
 
 # --- SETUP ---
@@ -62,8 +62,7 @@ with st.sidebar:
         if f:
             try:
                 st.session_state["cleaner_filepath"] = f
-                # Lade mit Repair-Funktion
-                gdf = load_geodataframe(f)
+                gdf = load_geodataframe_raw(f)
                 st.session_state["cleaner_gdf"] = gdf
                 st.session_state["cleaner_stats"] = analyze_tags(gdf)
                 st.rerun()
@@ -129,7 +128,7 @@ if st.session_state["cleaner_gdf"] is not None:
                 "Sample": st.column_config.TextColumn("Beispiel", disabled=True),
             },
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
             height=500
         )
 
@@ -153,6 +152,13 @@ if st.session_state["cleaner_gdf"] is not None:
         st.write(f"**Bleiben erhalten ({len(cols_to_keep)}):**")
         st.success(", ".join(cols_to_keep))
 
+    save_mode = st.radio(
+        "Speichermodus",
+        ["In-Place (Original überschreiben)", "Kopie (_clean)"],
+        index=1,
+        key="cleaner_save_mode"
+    )
+
     if st.button("🚀 Datei bereinigen und speichern", type="primary"):
         if not cols_to_delete:
             st.warning("Keine Tags zum Löschen ausgewählt. Datei bleibt unverändert.")
@@ -160,23 +166,31 @@ if st.session_state["cleaner_gdf"] is not None:
             try:
                 # Kopie erstellen und Spalten droppen
                 clean_gdf = gdf.drop(columns=cols_to_delete)
-                
+
                 # Pfad generieren
                 orig_path = st.session_state["cleaner_filepath"]
                 dir_name = os.path.dirname(orig_path)
                 base_name = os.path.splitext(os.path.basename(orig_path))[0]
                 new_path = os.path.join(dir_name, f"{base_name}_clean.geojson")
-                
-                clean_gdf.to_file(new_path, driver='GeoJSON')
-                
-                # Dateigrößen Vergleich
+
+                in_place = "In-Place" in save_mode
+                if in_place:
+                    new_path = orig_path
+
                 size_old = os.path.getsize(orig_path) / 1024
+
+                clean_gdf.to_file(new_path, driver='GeoJSON')
+
+                # Dateigrößen Vergleich
                 size_new = os.path.getsize(new_path) / 1024
                 diff = size_old - size_new
-                
+
                 st.balloons()
-                st.success(f"Datei gespeichert unter: `{new_path}`")
-                
+                if in_place:
+                    st.success("Änderungen in der Originaldatei gespeichert.")
+                else:
+                    st.success(f"Datei gespeichert unter: `{new_path}`")
+
                 col_m1, col_m2, col_m3 = st.columns(3)
                 col_m1.metric("Alte Größe", f"{size_old:.1f} KB")
                 col_m2.metric("Neue Größe", f"{size_new:.1f} KB")

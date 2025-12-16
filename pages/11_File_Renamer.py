@@ -126,7 +126,7 @@ if st.session_state["renamer_dir"] and st.session_state["renamer_files"]:
             return ['background-color: #f8d7da'] * len(row) # Light Red
         return [''] * len(row)
 
-    st.dataframe(df.style.apply(highlight_rows, axis=1), use_container_width=True, height=400)
+    st.dataframe(df.style.apply(highlight_rows, axis=1), width="stretch", height=400)
     
     # --- ACTION ---
     st.divider()
@@ -135,7 +135,7 @@ if st.session_state["renamer_dir"] and st.session_state["renamer_files"]:
     
     with c_btn:
         btn_disabled = not has_changes or has_conflicts or not search_pattern
-        if st.button("🚀 Alle umbenennen", type="primary", disabled=btn_disabled, use_container_width=True):
+        if st.button("🚀 Alle umbenennen", type="primary", disabled=btn_disabled, width="stretch"):
             
             success_count = 0
             fail_count = 0
