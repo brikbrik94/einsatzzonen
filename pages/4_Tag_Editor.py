@@ -80,7 +80,7 @@ if st.session_state["editor_gdf"] is not None:
         edited_df = st.data_editor(
             df_display,
             num_rows="fixed", # Keine Zeilen hinzufügen/löschen hier (Geometrie würde fehlen)
-            use_container_width=True,
+            width="stretch",
             height=600,
             key="data_editor_widget"
         )

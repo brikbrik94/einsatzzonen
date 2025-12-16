@@ -129,7 +129,7 @@ if st.session_state["cleaner_gdf"] is not None:
                 "Sample": st.column_config.TextColumn("Beispiel", disabled=True),
             },
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
             height=500
         )
 
