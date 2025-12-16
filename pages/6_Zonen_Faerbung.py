@@ -8,7 +8,7 @@ import os
 
 # Pfad-Fix für Importe aus src
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from src.geojson_tools import process_coloring, load_geodataframe, select_file_dialog
+from src.geojson_tools import process_coloring, load_geodataframe_raw, select_file_dialog
 
 st.set_page_config(page_title="Zonen Färbung", page_icon="🎨", layout="wide")
 
@@ -26,7 +26,7 @@ with st.sidebar:
         f = select_file_dialog("Zonen Datei wählen")
         if f:
             try:
-                st.session_state["color_gdf"] = load_geodataframe(f)
+                st.session_state["color_gdf"] = load_geodataframe_raw(f)
                 st.session_state["color_filename"] = os.path.basename(f)
                 st.rerun()
             except Exception as e:

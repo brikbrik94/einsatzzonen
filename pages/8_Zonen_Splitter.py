@@ -10,10 +10,10 @@ import json
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.geojson_tools import (
-    load_config, 
-    select_file_dialog, 
-    select_folder_dialog, 
-    load_geodataframe
+    load_config,
+    select_file_dialog,
+    select_folder_dialog,
+    load_geodataframe_raw
 )
 
 # --- SETUP ---
@@ -161,7 +161,7 @@ with st.sidebar:
     if st.button("📂 GeoJSON laden", type="primary"):
         f = select_file_dialog()
         if f:
-            st.session_state["split_gdf"] = load_geodataframe(f)
+            st.session_state["split_gdf"] = load_geodataframe_raw(f)
             st.session_state["split_filename"] = os.path.basename(f)
             st.rerun()
 
@@ -231,13 +231,13 @@ if st.session_state["split_gdf"] is not None:
             for ls in ls_cols:
                 col_config[ls] = st.column_config.CheckboxColumn(ls, default=False)
 
-            edited_unass_df = st.data_editor(
-                unass_df,
-                column_config=col_config,
-                hide_index=True,
-                use_container_width=True,
-                height=500
-            )
+        edited_unass_df = st.data_editor(
+            unass_df,
+            column_config=col_config,
+            hide_index=True,
+            width="stretch",
+            height=500
+        )
         else:
             st.success("🎉 Alles erledigt! Keine offenen Zonen.")
 
@@ -247,7 +247,7 @@ if st.session_state["split_gdf"] is not None:
         col_l, col_r = st.columns([3,1])
         with col_l:
             with st.expander("Bereits zugeordnete Zonen ansehen"):
-                st.dataframe(ass_df[["Name", "Info", "Zuweisung"]], use_container_width=True)
+                st.dataframe(ass_df[["Name", "Info", "Zuweisung"]], width="stretch")
 
         with col_r:
             if st.button("Dateien splitten & speichern", type="primary"):

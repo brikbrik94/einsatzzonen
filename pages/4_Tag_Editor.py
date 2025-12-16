@@ -8,8 +8,8 @@ import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.geojson_tools import (
-    select_file_dialog, 
-    load_geodataframe
+    select_file_dialog,
+    load_geodataframe_raw
 )
 
 # --- SETUP ---
@@ -40,7 +40,7 @@ with st.sidebar:
         f = select_file_dialog()
         if f:
             try:
-                st.session_state["editor_gdf"] = load_geodataframe(f)
+                st.session_state["editor_gdf"] = load_geodataframe_raw(f)
                 st.session_state["editor_filepath"] = f
                 st.session_state["editor_unsaved_changes"] = False
                 st.rerun()
@@ -80,7 +80,7 @@ if st.session_state["editor_gdf"] is not None:
         edited_df = st.data_editor(
             df_display,
             num_rows="fixed", # Keine Zeilen hinzufügen/löschen hier (Geometrie würde fehlen)
-            use_container_width=True,
+            width="stretch",
             height=600,
             key="data_editor_widget"
         )

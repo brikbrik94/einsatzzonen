@@ -8,8 +8,8 @@ import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.geojson_tools import (
-    select_file_dialog, 
-    load_geodataframe
+    select_file_dialog,
+    load_geodataframe_raw
 )
 
 # --- SETUP ---
@@ -62,8 +62,7 @@ with st.sidebar:
         if f:
             try:
                 st.session_state["cleaner_filepath"] = f
-                # Lade mit Repair-Funktion
-                gdf = load_geodataframe(f)
+                gdf = load_geodataframe_raw(f)
                 st.session_state["cleaner_gdf"] = gdf
                 st.session_state["cleaner_stats"] = analyze_tags(gdf)
                 st.rerun()
@@ -129,7 +128,7 @@ if st.session_state["cleaner_gdf"] is not None:
                 "Sample": st.column_config.TextColumn("Beispiel", disabled=True),
             },
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
             height=500
         )
 
