@@ -10,10 +10,10 @@ import json
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.geojson_tools import (
-    load_config, 
-    select_file_dialog, 
-    select_folder_dialog, 
-    load_geodataframe
+    load_config,
+    select_file_dialog,
+    select_folder_dialog,
+    load_geodataframe_raw
 )
 
 # --- SETUP ---
@@ -161,7 +161,7 @@ with st.sidebar:
     if st.button("📂 GeoJSON laden", type="primary"):
         f = select_file_dialog()
         if f:
-            st.session_state["split_gdf"] = load_geodataframe(f)
+            st.session_state["split_gdf"] = load_geodataframe_raw(f)
             st.session_state["split_filename"] = os.path.basename(f)
             st.rerun()
 
