@@ -8,6 +8,7 @@ import sys
 import json 
 from datetime import datetime
 from shapely.geometry import Polygon
+from math import radians, sin, cos, sqrt, atan2
 
 # --- SETUP: SHARED TOOLS ---
 # Nur für Config & Dialoge, NICHT für Daten-Loading
@@ -60,7 +61,7 @@ st.title("🚒 Einsatzzonen Generator (Robust Iterativ)")
 
 cfg = load_config(GLOBAL_CONFIG_FILE)
 defaults = {
-    "area_file_path": "", "stations_file_path": "", "output_folder_path": os.getcwd(),
+    "area_file_path": "", "stations_file_path": "", "helicopter_stations_file_path": "", "output_folder_path": os.getcwd(),
     "run_name": "Run_01", "ors_base_url": "http://127.0.0.1:8082/ors/v2", 
     "available_profiles": ["driving-car"], "selected_profile": "driving-car", 
     "hex_edge_length": 500, "n_neighbors": 10, "matrix_limit": 2500,
@@ -97,6 +98,11 @@ with st.sidebar:
         f = select_file_dialog("DS"); 
         if f: st.session_state["stations_file_path"] = f; autosave(); st.rerun()
     st.text_input("DS", key="stations_file_path")
+
+    if st.button("📂 NAH"):
+        f = select_file_dialog("NAH");
+        if f: st.session_state["helicopter_stations_file_path"] = f; autosave(); st.rerun()
+    st.text_input("NAH", key="helicopter_stations_file_path")
     
     st.divider()
     st.text_input("Run Name", key="run_name")
@@ -218,6 +224,48 @@ def create_hex_grid(area, edge):
     except: u = am.geometry.unary_union
     return g[g.intersects(u)].copy().to_crs(epsg=4326)
 
+START_DELAY_SECONDS = 2 * 60
+CRUISE_SPEED_M_PER_S = 230000 / 3600
+
+def compute_flight_estimate(distance_m, start_delay_seconds=START_DELAY_SECONDS, speed_m_per_s=CRUISE_SPEED_M_PER_S):
+    if not isinstance(distance_m, (int, float)) or distance_m < 0:
+        return None
+    if not isinstance(speed_m_per_s, (int, float)) or speed_m_per_s <= 0:
+        return None
+    delay = start_delay_seconds if isinstance(start_delay_seconds, (int, float)) and start_delay_seconds > 0 else 0
+    flight_seconds = distance_m / speed_m_per_s
+    return delay + flight_seconds
+
+def haversine_distance_m(lon1, lat1, lon2, lat2):
+    radius = 6371000
+    phi1, phi2 = radians(lat1), radians(lat2)
+    d_phi = radians(lat2 - lat1)
+    d_lambda = radians(lon2 - lon1)
+    a = sin(d_phi / 2) ** 2 + cos(phi1) * cos(phi2) * sin(d_lambda / 2) ** 2
+    c = 2 * atan2(sqrt(a), sqrt(1 - a))
+    return radius * c
+
+def get_fastest_helicopter_eta(hex_centroids, helicopter_gdf):
+    if helicopter_gdf is None or helicopter_gdf.empty:
+        return [None] * len(hex_centroids)
+
+    heli_wgs = helicopter_gdf.to_crs(epsg=4326)
+    heli_coords = [(geom.x, geom.y) for geom in heli_wgs.geometry.centroid]
+    heli_ids = heli_wgs.index.tolist()
+
+    results = []
+    for lon, lat in hex_centroids:
+        best = None
+        for (h_lon, h_lat), h_id in zip(heli_coords, heli_ids):
+            distance_m = haversine_distance_m(lon, lat, h_lon, h_lat)
+            eta_seconds = compute_flight_estimate(distance_m)
+            if eta_seconds is None:
+                continue
+            if best is None or eta_seconds < best[0]:
+                best = (eta_seconds, h_id)
+        results.append(best)
+    return results
+
 def run_routing_batch(hex_gdf, station_gdf, cfg, ui_callback):
     h_c = [[p.x,p.y] for p in hex_gdf.geometry.centroid]
     s_c = [[p.x,p.y] for p in station_gdf.geometry.centroid]
@@ -251,7 +299,7 @@ def run_routing_batch(hex_gdf, station_gdf, cfg, ui_callback):
                     v.sort(key=lambda x:x[0])
                     # Top N speichern
                     top_n = cfg['candidate_count'] if cfg['store_candidates'] else 1
-                    res.append([x[1] for x in v[:top_n]])
+                    res.append(v[:top_n])
             else: 
                 for _ in chunk: res.append([])
         except:
@@ -273,7 +321,7 @@ def render_step_status(placeholder, steps_status, current_detail=""):
 
 # --- PROZESS STEUERUNG ---
 
-def process_single_area(sub_area, all_stations, cfg, status_ph, prog_bar, area_name, selected_tags):
+def process_single_area(sub_area, all_stations, helicopter_stations, cfg, status_ph, prog_bar, area_name, selected_tags):
     
     # Initiale Steps
     steps = [
@@ -328,6 +376,8 @@ def process_single_area(sub_area, all_stations, cfg, status_ph, prog_bar, area_n
         prog_bar.progress(progress)
         
     matrix_res = run_routing_batch(grid, rel, cfg, route_ui_cb)
+    hex_centroids = [(p.x, p.y) for p in grid.geometry.centroid]
+    helicopter_best = get_fastest_helicopter_eta(hex_centroids, helicopter_stations)
     
     steps[2] = ("3. Matrix Routing", 2)
     steps[3] = ("4. Daten zusammenführen", 1)
@@ -336,11 +386,38 @@ def process_single_area(sub_area, all_stations, cfg, status_ph, prog_bar, area_n
     
     # --- 4. MERGE ---
     lkp = all_stations['final_label'].to_dict()
-    grid['zone_label'] = [lkp.get(r[0]) if r else None for r in matrix_res]
+    helicopter_labels = {}
+    if helicopter_stations is not None and not helicopter_stations.empty:
+        helicopter_labels = helicopter_stations['final_label'].to_dict()
+
+    zone_labels = []
+    nah_names = []
+    nah_times = []
+
+    for r, h_best in zip(matrix_res, helicopter_best):
+        if not r:
+            zone_labels.append(None)
+            nah_names.append(None)
+            nah_times.append(None)
+            continue
+
+        nef_best = r[0]
+        if h_best and h_best[0] < nef_best[0]:
+            zone_labels.append(helicopter_labels.get(h_best[1]))
+            nah_names.append(helicopter_labels.get(h_best[1]))
+            nah_times.append(h_best[0])
+        else:
+            zone_labels.append(lkp.get(nef_best[1]))
+            nah_names.append(None)
+            nah_times.append(None)
+
+    grid['zone_label'] = zone_labels
     
     if cfg["store_candidates"]:
         for i in range(cfg["candidate_count"]):
-            grid[f"cand_{i+1}_name"] = [lkp.get(r[i]) if r and len(r)>i else None for r in matrix_res]
+            grid[f"cand_{i+1}_name"] = [lkp.get(r[i][1]) if r and len(r)>i else None for r in matrix_res]
+        grid["nah_name"] = nah_names
+        grid["nah_eta_seconds"] = nah_times
 
     grid = grid.dropna(subset=['zone_label'])
     
@@ -385,9 +462,16 @@ if st.button("🚀 Start", type="primary"):
     with st.spinner("Lade Geodaten (Raw)..."):
         ga = load_data_local(st.session_state["area_file_path"])
         gs = load_data_local(st.session_state["stations_file_path"])
+        gs_h = None
+        if st.session_state.get("helicopter_stations_file_path"):
+            gs_h = load_data_local(st.session_state["helicopter_stations_file_path"])
         if 'alt_name' not in gs: gs['alt_name'] = None
         if 'name' not in gs: gs['name'] = gs.index.astype(str)
         gs['final_label'] = gs['alt_name'].fillna(gs['name'])
+        if gs_h is not None:
+            if 'alt_name' not in gs_h: gs_h['alt_name'] = None
+            if 'name' not in gs_h: gs_h['name'] = gs_h.index.astype(str)
+            gs_h['final_label'] = gs_h['alt_name'].fillna(gs_h['name'])
 
     out_dir = os.path.join(st.session_state["output_folder_path"], f"{st.session_state['run_name']}")
     os.makedirs(out_dir, exist_ok=True)
@@ -423,7 +507,7 @@ if st.button("🚀 Start", type="primary"):
         status_header.markdown(f"### 📍 Verarbeite: **{nm}** ({idx+1}/{len(items)})")
         
         # Processing
-        h_res, z_res = process_single_area(sub_area, gs, cfg_run, status_list, progress_bar, nm, tags_to_keep)
+        h_res, z_res = process_single_area(sub_area, gs, gs_h, cfg_run, status_list, progress_bar, nm, tags_to_keep)
         
         # Speichern Grid (Kandidaten)
         if st.session_state["store_candidates"] and h_res is not None:
