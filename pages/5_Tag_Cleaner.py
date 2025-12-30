@@ -86,6 +86,31 @@ if st.session_state["cleaner_gdf"] is not None:
     with col_r:
         st.subheader("⚙️ Auswahl")
         st.info("Wähle die Tags aus, die **GELÖSCHT** werden sollen.")
+
+        presets = {
+            "Keine Voreinstellung": None,
+            "Einsatzstellen (Rettungsdienst)": [
+                "id",
+                "addr:city",
+                "addr:housenumber",
+                "addr:postcode",
+                "addr:street",
+                "ambulance_station:emergency_doctor",
+                "ambulance_station:patient_transport",
+                "brand",
+                "brand:short",
+                "emergency",
+                "name",
+                "operator",
+                "short_name",
+            ],
+        }
+        preset_choice = st.selectbox(
+            "Preset",
+            options=list(presets.keys()),
+            index=0,
+            help="Legt fest, welche Tags standardmäßig erhalten bleiben.",
+        )
         
         # Auswahl-Modus
         mode = st.radio(
@@ -101,7 +126,10 @@ if st.session_state["cleaner_gdf"] is not None:
         editor_df = stats_df.copy()
         
         # Default Wert basierend auf Radio-Button setzen
-        if "Alles auswählen" in mode:
+        if preset_choice != "Keine Voreinstellung":
+            keep_tags = set(presets[preset_choice] or [])
+            editor_df.insert(0, "Löschen", ~editor_df["Tag"].isin(keep_tags))
+        elif "Alles auswählen" in mode:
             editor_df.insert(0, "Löschen", True)
         elif "Nichts auswählen" in mode:
             editor_df.insert(0, "Löschen", False)
