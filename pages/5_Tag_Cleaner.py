@@ -101,6 +101,7 @@ if st.session_state["cleaner_gdf"] is not None:
                 "brand:short",
                 "emergency",
                 "name",
+                "alt_name",
                 "operator",
                 "short_name",
             ],

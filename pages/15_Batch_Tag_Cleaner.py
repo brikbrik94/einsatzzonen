@@ -36,6 +36,7 @@ presets = {
         "brand:short",
         "emergency",
         "name",
+        "alt_name",
         "operator",
         "short_name",
     ],
