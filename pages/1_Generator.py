@@ -62,7 +62,7 @@ st.title("🚒 Einsatzzonen Generator (Robust Iterativ)")
 cfg = load_config(GLOBAL_CONFIG_FILE)
 defaults = {
     "area_file_path": "", "stations_file_path": "", "helicopter_stations_file_path": "", "output_folder_path": os.getcwd(),
-    "run_name": "Run_01", "ors_base_url": "http://127.0.0.1:8082/ors/v2", 
+    "run_name": "Run_01", "ors_base_url": os.getenv("ORS_BASE_URL", "http://127.0.0.1:8082/ors/v2"), 
     "available_profiles": ["driving-car"], "selected_profile": "driving-car", 
     "hex_edge_length": 500, "n_neighbors": 10, "matrix_limit": 2500,
     "sequential_processing": False, "save_single_zones": True,
@@ -537,6 +537,11 @@ if st.button("🚀 Start", type="primary"):
                 "meta": {
                     "run_name": st.session_state["run_name"],
                     "selected_tags": tags_to_keep,
+                    "area_path": st.session_state["area_file_path"],
+                    "stations_path": st.session_state["stations_file_path"],
+                    "helicopter_stations_path": st.session_state.get("helicopter_stations_file_path", ""),
+                    "ors_base_url": st.session_state["ors_base_url"],
+                    "profile": st.session_state["selected_profile"],
                     "date": datetime.now().isoformat()
                 },
                 "batches": batches

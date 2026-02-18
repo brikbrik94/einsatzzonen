@@ -1,0 +1,17 @@
+[Unit]
+Description=Einsatzzonen Streamlit App
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/workspace/einsatzzonen
+Environment=PATH=/workspace/einsatzzonen/.venv/bin
+Environment=ORS_BASE_URL=http://127.0.0.1:8082/ors/v2
+ExecStart=/workspace/einsatzzonen/.venv/bin/streamlit run Home.py --server.address 0.0.0.0 --server.port 8501 --server.headless true
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

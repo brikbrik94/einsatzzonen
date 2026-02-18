@@ -23,7 +23,7 @@ st.markdown("Verfeinerung mit **Echtzeit-Routing** und **Attribut-Wiederherstell
 # --- STATE & CONFIG ---
 cfg = load_config(CONFIG_FILE)
 defaults = {
-    "ors_url": "http://127.0.0.1:8082/ors/v2", 
+    "ors_url": os.getenv("ORS_BASE_URL", "http://127.0.0.1:8082/ors/v2"), 
     "top_n": 3, 
     "threads": 4, 
     "profile": "driving-emergency", 
@@ -221,31 +221,39 @@ if st.button("🚀 Start Smart-Refiner", type="primary"):
         
         if fpath.endswith(".json"):
             try:
-                js = json.load(open(fpath))
-                if "meta" in js:
-                    if "run_name" in js["meta"]: run_name = js["meta"]["run_name"]
-                    ap = js["meta"]["area_path"]
-                    sp = js["meta"]["stations_path"]
-                    
+                with open(fpath, "r", encoding="utf-8") as fh:
+                    js = json.load(fh)
+                meta = js.get("meta", {})
+                if meta:
+                    run_name = meta.get("run_name", run_name)
+                    ap = meta.get("area_path")
+                    sp = meta.get("stations_path")
+
                     # Tags aus Meta lesen
-                    tags_to_load = js["meta"].get("selected_tags", [])
+                    tags_to_load = meta.get("selected_tags", [])
 
-                    if os.path.exists(ap):
+                    if ap and os.path.exists(ap):
                         area_gdf = load_geodataframe_raw(ap).to_crs(epsg=4326)
+                    elif ap:
+                        st.warning(f"Gebietspfad aus Index nicht gefunden: {ap}")
 
-                    if os.path.exists(sp):
+                    if sp and os.path.exists(sp):
                         # Lade DS komplett für Lookup UND Attribute
                         raw_st = load_geodataframe_raw(sp).to_crs(epsg=4326)
                         if 'alt_name' not in raw_st: raw_st['alt_name'] = None
                         if 'name' not in raw_st: raw_st['name'] = raw_st.index.astype(str)
                         raw_st['final_label'] = raw_st['alt_name'].fillna(raw_st['name'])
-                        
+
                         # Lookup für Koordinaten
                         st_lookup = build_lookup(raw_st)
-                        
+
                         # Attribute DF für Merge (falls Tags gewählt wurden)
                         if tags_to_load:
                             station_attrs = get_station_attributes_df(raw_st, tags_to_load)
+                    elif sp:
+                        st.warning(f"Dienststellenpfad aus Index nicht gefunden: {sp}")
+                    else:
+                        st.warning("Index enthält keinen 'stations_path'. Es wird nur mit vorhandenen zone_label-Werten gearbeitet.")
                 
                 blist = js["batches"] if "batches" in js else js
                 bd = os.path.dirname(fpath)
