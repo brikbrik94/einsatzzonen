@@ -10,8 +10,6 @@ Beinhaltet:
 import os
 import json
 import logging
-import tkinter as tk
-from tkinter import filedialog
 from typing import Dict, Any, Tuple, List, Optional
 
 import geopandas as gpd
@@ -47,22 +45,49 @@ def save_config(filepath: str, data: Dict[str, Any]):
 def select_file_dialog(title: str = "Datei wählen", filetypes: List[Tuple[str, str]] = None) -> str:
     if filetypes is None:
         filetypes = [("GeoJSON", "*.geojson"), ("JSON", "*.json")]
-    root = tk.Tk(); root.withdraw(); root.wm_attributes('-topmost', 1)
-    f = filedialog.askopenfilename(title=title, filetypes=filetypes)
-    root.destroy()
-    return f
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.wm_attributes('-topmost', 1)
+        f = filedialog.askopenfilename(title=title, filetypes=filetypes)
+        root.destroy()
+        return f
+    except Exception as e:
+        logger.warning(f"Dateidialog nicht verfügbar (headless?): {e}")
+        return ""
 
 def select_files_dialog(title: str = "Dateien wählen") -> List[str]:
-    root = tk.Tk(); root.withdraw(); root.wm_attributes('-topmost', 1)
-    files = filedialog.askopenfilenames(title=title, filetypes=[("GeoJSON", "*.geojson")])
-    root.destroy()
-    return list(files)
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.wm_attributes('-topmost', 1)
+        files = filedialog.askopenfilenames(title=title, filetypes=[("GeoJSON", "*.geojson")])
+        root.destroy()
+        return list(files)
+    except Exception as e:
+        logger.warning(f"Dateidialog nicht verfügbar (headless?): {e}")
+        return []
 
 def select_folder_dialog(title: str = "Ordner wählen") -> str:
-    root = tk.Tk(); root.withdraw(); root.wm_attributes('-topmost', 1)
-    d = filedialog.askdirectory(title=title)
-    root.destroy()
-    return d
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.wm_attributes('-topmost', 1)
+        d = filedialog.askdirectory(title=title)
+        root.destroy()
+        return d
+    except Exception as e:
+        logger.warning(f"Ordnerdialog nicht verfügbar (headless?): {e}")
+        return ""
 
 # --- 3. GEOMETRIE & IO ---
 
