@@ -3,6 +3,7 @@ import sys
 
 import geopandas as gpd
 import streamlit as st
+from src.ui_theme import apply_ci_theme
 
 # --- IMPORT SHARED TOOLS ---
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -14,6 +15,8 @@ from src.geojson_tools import (
 
 # --- SETUP ---
 st.set_page_config(page_title="Batch Tag Cleaner", layout="wide", page_icon="🧹")
+
+apply_ci_theme()
 st.title("🧹 Batch GeoJSON Tag Cleaner")
 st.markdown("Bereinigt mehrere GeoJSON-Dateien auf einmal anhand eines Presets.")
 

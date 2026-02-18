@@ -1,4 +1,5 @@
 import streamlit as st
+from src.ui_theme import apply_ci_theme
 import geopandas as gpd
 import pandas as pd
 import os
@@ -16,6 +17,8 @@ from src.geojson_tools import (
 
 # --- SETUP ---
 st.set_page_config(page_title="Resolver", layout="wide")
+
+apply_ci_theme()
 st.title("🧩 Einsatzzonen Resolver (Step 3)")
 st.markdown("Fügt Teil-Dateien zusammen, standardisiert Namen und löst Grenzen auf.")
 

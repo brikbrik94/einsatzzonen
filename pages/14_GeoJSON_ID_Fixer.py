@@ -4,6 +4,7 @@ import sys
 from typing import Dict, Any, List, Tuple
 
 import streamlit as st
+from src.ui_theme import apply_ci_theme
 
 # --- OPTIONAL TKINTER IMPORTS ---
 try:
@@ -16,6 +17,8 @@ except Exception:
 
 
 st.set_page_config(page_title="GeoJSON ID Repair", page_icon="🪪", layout="wide")
+
+apply_ci_theme()
 st.title("🪪 GeoJSON IDs ergänzen")
 st.markdown(
     """

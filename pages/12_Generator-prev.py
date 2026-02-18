@@ -1,4 +1,5 @@
 import streamlit as st
+from src.ui_theme import apply_ci_theme
 import geopandas as gpd
 import pandas as pd
 import requests
@@ -18,6 +19,8 @@ from src.geojson_tools import (
 
 # --- KONFIGURATION ---
 st.set_page_config(page_title="Einsatzzonen Generator (Step 1)", layout="wide")
+
+apply_ci_theme()
 GLOBAL_CONFIG_FILE = "general_config.json"
 st.title("🚒 Einsatzzonen Generator (Step 1)")
 st.markdown("Erstellt Hexagon-Gitter (Outbound-Logik) mit **erweitertem Nachbarschafts-Pool**.")

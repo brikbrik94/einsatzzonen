@@ -1,4 +1,5 @@
 import streamlit as st
+from src.ui_theme import apply_ci_theme
 import geopandas as gpd
 import pandas as pd
 import requests
@@ -16,6 +17,8 @@ from src.geojson_tools import (
 )
 
 st.set_page_config(page_title="Refiner (Smart)", layout="wide")
+
+apply_ci_theme()
 CONFIG_FILE = "step2_config.json"
 st.title("🚑 Einsatzzonen Refiner (Step 2)")
 st.markdown("Verfeinerung mit **Echtzeit-Routing** und **Attribut-Wiederherstellung**.")

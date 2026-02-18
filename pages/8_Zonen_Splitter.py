@@ -1,4 +1,5 @@
 import streamlit as st
+from src.ui_theme import apply_ci_theme
 import geopandas as gpd
 import pandas as pd
 import os
@@ -18,6 +19,8 @@ from src.geojson_tools import (
 
 # --- SETUP ---
 st.set_page_config(page_title="Zonen Splitter", layout="wide", page_icon="🔀")
+
+apply_ci_theme()
 st.title("🔀 Zonen Splitter (Matrix-Zuweisung)")
 st.markdown("Automatische Zuordnung via **Funkkennung** ODER **Gemeinde/Bundesland** (mit intelligenter Namensbereinigung).")
 
