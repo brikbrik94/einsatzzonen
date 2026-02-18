@@ -72,3 +72,7 @@ sudo systemctl reload nginx
 - Dateidialoge sind headless-fähig abgesichert. Wenn kein Desktop verfügbar ist, nutzt die App weiterhin die manuellen Pfadfelder.
 - Für produktive Nutzung sollten Ein-/Ausgabepfade serverseitig klar definiert werden (z. B. `/srv/einsatzzonen/data`).
 
+
+## CI Bewertung
+
+Eine konkrete Einschätzung zur Umsetzung des OE5ITH-CI in Streamlit liegt unter `docs/ci_streamlit_umsetzung.md`.
