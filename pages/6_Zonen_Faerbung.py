@@ -1,4 +1,5 @@
 import streamlit as st
+from src.ui_theme import apply_ci_theme
 import geopandas as gpd
 import pandas as pd
 import json
@@ -11,6 +12,8 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.geojson_tools import process_coloring, load_geodataframe_raw, select_file_dialog
 
 st.set_page_config(page_title="Zonen Färbung", page_icon="🎨", layout="wide")
+
+apply_ci_theme()
 
 st.title("🎨 Zonen-Färbung")
 st.markdown("Färbt Zonen so ein, dass keine Nachbarn die gleiche Farbe haben.")

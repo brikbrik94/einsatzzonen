@@ -1,4 +1,5 @@
 import streamlit as st
+from src.ui_theme import apply_ci_theme
 import geopandas as gpd
 import pandas as pd
 import requests
@@ -56,6 +57,8 @@ def get_station_tags_df(filepath):
 
 # --- CONFIG ---
 st.set_page_config(page_title="Einsatzzonen Generator", layout="wide")
+
+apply_ci_theme()
 GLOBAL_CONFIG_FILE = "general_config.json"
 st.title("🚒 Einsatzzonen Generator (Robust Iterativ)")
 

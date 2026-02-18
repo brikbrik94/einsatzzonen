@@ -5,6 +5,7 @@ import sys
 from typing import Any, Dict, List, Tuple
 
 import streamlit as st
+from src.ui_theme import apply_ci_theme
 
 # Optional geometry tooling
 try:
@@ -41,6 +42,8 @@ except Exception:
     GEO_TOOLS_AVAILABLE = False
 
 st.set_page_config(page_title="Linien bereinigen (PolylineOffset Fix)", layout="wide")
+
+apply_ci_theme()
 st.title("🚧 Linien bereinigen (PolylineOffset Fix)")
 st.markdown(
     "Entfernt sehr kurze Segmente aus LineStrings/MultiLineStrings und bietet optional eine Douglas-Peucker-Vereinfachung."

@@ -1,4 +1,5 @@
 import streamlit as st
+from src.ui_theme import apply_ci_theme
 import pandas as pd
 import os
 import sys
@@ -14,6 +15,8 @@ from src.geojson_tools import (
 
 # --- SETUP ---
 st.set_page_config(page_title="Leitstellen Config", layout="wide", page_icon="🏢")
+
+apply_ci_theme()
 st.title("🏢 Leitstellen Konfiguration")
 st.markdown("Verwalte hier die Zuordnungen von **Bezirks-Codes** und **Bundesländern** zu deinen Leitstellen.")
 

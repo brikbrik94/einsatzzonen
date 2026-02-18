@@ -1,10 +1,13 @@
 import streamlit as st
+from src.ui_theme import apply_ci_theme
 
 st.set_page_config(
     page_title="Einsatzzonen Suite",
     page_icon="🚑",
     layout="wide"
 )
+
+apply_ci_theme()
 
 st.title("🚑 Einsatzzonen Generator Suite")
 

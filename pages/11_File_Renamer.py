@@ -1,4 +1,5 @@
 import streamlit as st
+from src.ui_theme import apply_ci_theme
 import os
 import sys
 import pandas as pd
@@ -11,6 +12,8 @@ from src.geojson_tools import select_folder_dialog
 
 # --- SETUP ---
 st.set_page_config(page_title="File Renamer", layout="wide", page_icon="🏷️")
+
+apply_ci_theme()
 st.title("🏷️ Massen-Umbenenner")
 st.markdown("""
 Benenne viele Dateien gleichzeitig um. Ideal um den Output des **General Splitters** zu bereinigen.

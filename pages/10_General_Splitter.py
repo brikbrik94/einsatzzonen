@@ -1,4 +1,5 @@
 import streamlit as st
+from src.ui_theme import apply_ci_theme
 import geopandas as gpd
 import pandas as pd
 import os
@@ -19,6 +20,8 @@ st.set_page_config(
     page_icon="🧩",
     layout="wide",
 )
+
+apply_ci_theme()
 
 st.title("🧩 Universal GeoJSON Splitter")
 st.caption("Teile eine GeoJSON-Datei nach einem beliebigen Attribut in mehrere Dateien auf.")

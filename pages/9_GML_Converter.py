@@ -1,4 +1,5 @@
 import streamlit as st
+from src.ui_theme import apply_ci_theme
 import os
 import sys
 
@@ -13,6 +14,8 @@ from src.geojson_tools import (
 
 # --- SETUP ---
 st.set_page_config(page_title="GML Konverter", layout="wide", page_icon="🔄")
+
+apply_ci_theme()
 st.title("🔄 GML zu GeoJSON Konverter (Austria Edition)")
 st.markdown("""
 Konvertiert GML-Dateien in **GeoJSON (WGS84)**.
